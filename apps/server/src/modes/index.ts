@@ -28,6 +28,9 @@ export function createServerMode(host: ModeHost, opts: ModeOptions = {}): Server
 			return new InfectedMode(host, opts.infected);
 		case 'hns':
 			return new HnsMode(host, { ...hnsEnvOptions(), ...opts.hns });
+		case 'defense':
+			// Contract stub: the Zombie Defense rules module replaces this.
+			throw new Error('Zombie Defense server mode is not built yet');
 	}
 }
 

@@ -29,6 +29,8 @@ export interface MapDef {
 	zombies?: ZombieRoute;
 	/** Hide and seek maps (required there): hider/seeker spawns and the seeker cage (docs/modes.md#hide-and-seek). */
 	hns?: HnsMapInfo;
+	/** Zombie Defense maps (required there): the base's openings, turret pads, zombie spawns and nav graph. */
+	defense?: DefenseMapInfo;
 	brushes: BrushDef[];
 	zones: Zone[];
 	theme: Theme;
@@ -85,6 +87,72 @@ export interface HnsCashBag {
 	pos: Vec3;
 	/** Where that is, for the announcement: "on the plaza, by the fountain". */
 	place: string;
+}
+
+/**
+ * Zombie Defense map data (docs/modes.md#zombie-defense). Players start inside
+ * a base (MapDef.spawns, >= 4, all inside). Zombies spawn outside, walk the nav
+ * graph to an opening, tear its barricade down plank by plank and then chase
+ * the players inside, also over the nav graph.
+ */
+export interface DefenseMapInfo {
+	/** Windows, doors and breaches in the base wall, on every side of it. */
+	openings: DefenseOpening[];
+	/** Fixed spots where a turret can be built (inside the base, or on its walls). */
+	pads: DefensePad[];
+	/** Zombie spawn areas outside the base, spread around it (>= 1 feeding every side). */
+	spawnZones: DefenseSpawnZone[];
+	/**
+	 * Walkable graph for the AI. Node positions are feet positions on the floor;
+	 * the straight line of every link is walkable for the player hull with the
+	 * real collision and every barricade open (map tests walk them). The graph is
+	 * connected, and every path from outside to inside goes through an opening's
+	 * `outside` and `inside` nodes.
+	 */
+	nav: DefenseNav;
+}
+
+export interface DefenseNav {
+	nodes: Vec3[];
+	/** Undirected links between node indices. */
+	links: [number, number][];
+}
+
+/**
+ * A barricade spot. While it has at least one plank, `min`..`max` is solid for
+ * players and zombies (not in `brushes`: the mode adds and removes it), but
+ * bullets pass through it.
+ */
+export interface DefenseOpening {
+	/** Stable id, unique on the map ("north_window"). */
+	id: string;
+	/** For chat and HUD: "north window". */
+	name: string;
+	min: Vec3;
+	max: Vec3;
+	/** Nav node just outside, where zombies stand while they tear planks off. */
+	outside: number;
+	/** Nav node just inside, where players stand to repair (and zombies enter). */
+	inside: number;
+	/** Planks when fully boarded (default 6). */
+	planks?: number;
+}
+
+export interface DefensePad {
+	/** Stable id, unique on the map ("pad_ne"). */
+	id: string;
+	/** Floor point at the pad's centre; the turret stands on it. */
+	pos: Vec3;
+	/** Default facing in degrees (0 = +X). */
+	yaw: number;
+}
+
+export interface DefenseSpawnZone {
+	/** Box standing on walkable floor (min.z = floor top), outside the base. */
+	min: Vec3;
+	max: Vec3;
+	/** Nav node next to the box that zombies spawned here start from. */
+	node: number;
 }
 
 export interface ZombieGate {

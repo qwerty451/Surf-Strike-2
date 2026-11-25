@@ -77,7 +77,8 @@ function mockRows(mode: GameModeId, n: number, self: number, old: boolean): Scor
 				deaths: i,
 				status: i === 2 ? Status.Alpha : i % 2 ? Status.Infected : Status.Alive
 			},
-			hns: { score, kills: i % 4, status: i % 3 === 1 ? Status.Seeker : Status.Hider }
+			hns: { score, kills: i % 4, status: i % 3 === 1 ? Status.Seeker : Status.Hider },
+			defense: { kills: Math.max(0, 90 - i * 9), status: i % 4 === 3 ? Status.Down : Status.Alive }
 		};
 		rows.push({ ...base, ...byMode[mode] });
 	}
