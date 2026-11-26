@@ -1,13 +1,11 @@
 <script lang="ts">
 	import { gameMode, scoreboardColumns, splitScoreboard, type GameModeId, type ModeState, type RichEntry, type ScoreRow } from '@surf/shared';
-	import { formatClock } from '#lib/ui/format.js';
 	import RichList from '#lib/ui/RichList.svelte';
 
 	let {
 		rows,
 		mapTitle,
 		mapId,
-		timeLeft,
 		playerCount,
 		maxPlayers,
 		staged,
@@ -20,7 +18,6 @@
 		rows: ScoreRow[];
 		mapTitle: string;
 		mapId: string;
-		timeLeft: number;
 		playerCount: number;
 		maxPlayers: number;
 		staged: boolean;
@@ -51,7 +48,6 @@
 			</div>
 			<div class="meta">
 				<span><span class="ss-label">Mode</span> <span class="ss-num">{gameMode(mode).label}</span></span>
-				<span><span class="ss-label">Time left</span> <span class="ss-num">{formatClock(timeLeft)}</span></span>
 				<span><span class="ss-label">Players</span> <span class="ss-num">{playerCount} / {maxPlayers}</span></span>
 			</div>
 		</header>

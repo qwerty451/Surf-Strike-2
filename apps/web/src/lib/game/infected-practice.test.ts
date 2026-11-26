@@ -168,7 +168,6 @@ function rig(opts: RigOpts = {}) {
 			origin.y = y;
 			origin.z = z;
 		},
-		voteOpen: () => false,
 		sound: (name, at) => void sounds.push({ name, at: at ? { ...at } : undefined }),
 		setZoom: () => {},
 		setViewKick: (pitch, yaw) => {

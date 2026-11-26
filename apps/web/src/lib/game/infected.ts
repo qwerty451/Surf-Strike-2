@@ -226,7 +226,6 @@ export interface InfHost {
 	notice(text: string): void;
 	/** Teleport the local player (spawn, fall-out). */
 	teleport(x: number, y: number, z: number, yaw: number): void;
-	voteOpen(): boolean;
 	sound(name: InfSound, at?: Vec3): void;
 	/** Zoom: horizontal FOV at 4:3, or null for the cvar FOV. */
 	setZoom(fov: number | null): void;
@@ -609,10 +608,10 @@ export class InfectedClient {
 
 	/**
 	 * Keys 1-4: [1] round preset, [2] pistol, [3] knife, [4] call an earned
-	 * M.O.A.B. (same as N). Returns false when the key should go to the map vote.
+	 * M.O.A.B. (same as N). Returns false while spectating.
 	 */
 	slot(n: number, now: number): boolean {
-		if (this.host.voteOpen() || this.spectating) return false;
+		if (this.spectating) return false;
 		// Practice range: 4 tries the next primary (no M.O.A.B. without a round).
 		if (n === 4 && this.practice.active) return this.cyclePrimary(now);
 		if (n === 4) {

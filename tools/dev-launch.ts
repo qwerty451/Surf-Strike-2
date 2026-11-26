@@ -287,8 +287,9 @@ export function modeOptions(o: Pick<LaunchOptions, 'fast' | 'grace' | 'round' | 
 	return m;
 }
 
-export function gameUrl(webPort: number, port: number): string {
-	return `http://localhost:${webPort}/?server=ws://localhost:${port}/ws`;
+/** `map`: the lobby the browser joins (the bots' map). */
+export function gameUrl(webPort: number, port: number, map?: string): string {
+	return `http://localhost:${webPort}/?server=ws://localhost:${port}/ws${map ? `&map=${encodeURIComponent(map)}` : ''}`;
 }
 
 /** `--list` output. */
@@ -442,7 +443,7 @@ export class Bot {
 		this.ws.binaryType = 'arraybuffer';
 		this.ws.addEventListener('open', () => {
 			this.ws.send(
-				JSON.stringify({ type: 'hello', playerId: crypto.randomUUID(), name: this.name, version: PROTOCOL_VERSION })
+				JSON.stringify({ type: 'hello', playerId: crypto.randomUUID(), name: this.name, version: PROTOCOL_VERSION, map: this.mapId })
 			);
 		});
 		this.ws.addEventListener('message', (ev) => this.onMessage(ev.data));
@@ -485,6 +486,7 @@ export class Bot {
 				break;
 			case 'mapChange':
 				this.modeState = null;
+				this.players = new Map(msg.players.map((p) => [p.id, p.name]));
 				this.onMap(msg.map);
 				break;
 			case 'join':
@@ -533,6 +535,11 @@ export class Bot {
 				this.log(`${this.name}: server full`);
 				break;
 		}
+	}
+
+	/** Move to another map's lobby (answered with mapChange). */
+	join(mapId: string): void {
+		this.send({ type: 'changeMap', mapId });
 	}
 
 	private onMap(id: string): void {
@@ -692,15 +699,18 @@ export interface AimQuery {
 // Control API
 // ---------------------------------------------------------------------------
 
-/** Lobby internals the launcher needs; `rotation`/`handleRotation` are private, reached through a cast. */
+/** Lobby internals the launcher needs. */
 interface LobbyHandle {
 	currentMap: MapDef;
 	playerCount: number;
-	gameMode: { id: GameModeId; stateMessage?: () => unknown };
+	modeFor(mapId: string): { id: GameModeId; stateMessage?: () => unknown } | null;
+	lobbyCounts(): Record<string, number>;
 }
 
 interface ControlDeps {
 	lobby: LobbyHandle;
+	/** The map whose lobby the bots play in. */
+	map: () => MapDef;
 	port: number;
 	webUrl: string | null;
 	bots: () => Bot[];
@@ -740,12 +750,14 @@ function weaponArg(q: URLSearchParams): WeaponId | undefined {
 
 function status(deps: ControlDeps) {
 	const { lobby } = deps;
+	const map = deps.map();
 	return {
-		map: lobby.currentMap.id,
-		mode: lobby.currentMap.kind,
+		map: map.id,
+		mode: map.kind,
 		port: deps.port,
 		webUrl: deps.webUrl,
 		players: lobby.playerCount,
+		lobbies: lobby.lobbyCounts(),
 		bots: deps.bots().map((b) => {
 			const p = b.pose();
 			return {
@@ -758,7 +770,7 @@ function status(deps: ControlDeps) {
 				pos: { x: round(p.x), y: round(p.y), z: round(p.z), yaw: round(p.yaw), pitch: round(p.pitch) }
 			};
 		}),
-		modeState: lobby.gameMode.stateMessage?.() ?? null
+		modeState: lobby.modeFor(map.id)?.stateMessage?.() ?? null
 	};
 }
 
@@ -965,10 +977,8 @@ export async function main(argv: readonly string[]): Promise<number> {
 		);
 		return 1;
 	}
-	const lobby = server.lobby as unknown as LobbyHandle & {
-		rotation: { forceMap(id: string, now: number): unknown };
-		handleRotation(evs: unknown[]): void;
-	};
+	const lobby = server.lobby as unknown as LobbyHandle;
+	let botMap = lobby.currentMap;
 
 	let bots: Bot[] = [];
 	let patrol = opts.botPatrol;
@@ -976,7 +986,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 		while (bots.length > n) bots.pop()!.close();
 		const added: Bot[] = [];
 		while (bots.length < n) {
-			const b = new Bot(bots.length, server.port, lobby.currentMap, () => patrol, log);
+			const b = new Bot(bots.length, server.port, botMap, () => patrol, log);
 			bots.push(b);
 			added.push(b);
 		}
@@ -984,15 +994,17 @@ export async function main(argv: readonly string[]): Promise<number> {
 		const deadline = Date.now() + 3000;
 		while (added.some((b) => !b.connected) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
 	};
+	/** POST /map: the bots move to that map's lobby (players pick theirs in the server browser). */
 	const forceMap = (id: string): string | null => {
-		if (!getMap(id)) return `unknown map "${id}"`;
-		const ev = lobby.rotation.forceMap(id, Date.now());
-		if (!ev) return `map "${id}" cannot be loaded (not served)`;
-		lobby.handleRotation([ev]);
+		const map = getMap(id);
+		if (!map) return `unknown map "${id}"`;
+		if (!launchMaps().some((m) => m.id === id)) return `map "${id}" cannot be loaded (not served)`;
+		botMap = map;
+		for (const b of bots) b.join(id);
 		return null;
 	};
 
-	const webUrl = opts.serverOnly ? null : gameUrl(opts.webPort, server.port);
+	const webUrl = opts.serverOnly ? null : gameUrl(opts.webPort, server.port, botMap.id);
 	let ctrl: Server | null = null;
 	let vite: ChildProcess | null = null;
 	let stopping = false;
@@ -1025,7 +1037,10 @@ export async function main(argv: readonly string[]): Promise<number> {
 
 	if (opts.ctrlPort !== null) {
 		try {
-			ctrl = await startControl({ lobby, port: server.port, webUrl, bots: () => bots, setBots, forceMap, shutdown: () => void shutdown(0) }, opts.ctrlPort);
+			ctrl = await startControl(
+				{ lobby, map: () => botMap, port: server.port, webUrl, bots: () => bots, setBots, forceMap, shutdown: () => void shutdown(0) },
+				opts.ctrlPort
+			);
 		} catch (e) {
 			console.error(`play: control API on ${opts.ctrlPort} failed: ${(e as Error).message} (use --ctrl-port or --no-ctrl)`);
 			await shutdown(1);
@@ -1062,7 +1077,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 		` Server:   ws://localhost:${server.port}/ws   (http://localhost:${server.port}/health)`,
 		` Bots:     ${bots.length}${bots.length ? (patrol ? ' (patrolling)' : ' (standing)') : ''}   DB: ${opts.db}`,
 		ctrlBase
-			? ` Control:  ${ctrlBase}/status · POST /map?id= · /bots?count= · /bot/move · /bot/action`
+			? ` Control:  ${ctrlBase}/status · POST /map?id= (bots change lobby) · /bots?count= · /bot/move · /bot/action`
 			: ' Control:  disabled (--no-ctrl)',
 		' Ctrl+C stops everything.',
 		''

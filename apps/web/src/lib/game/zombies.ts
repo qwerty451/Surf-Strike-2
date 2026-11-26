@@ -58,7 +58,6 @@ export interface ZmHost {
 	notice(text: string): void;
 	/** Teleport the local player (spawn, checkpoint respawn, fall-out). */
 	teleport(x: number, y: number, z: number, yaw: number): void;
-	voteOpen(): boolean;
 	sound(name: ZmSound, at?: Vec3): void;
 	/** Zoom: horizontal FOV at 4:3, or null for the cvar FOV. */
 	setZoom(fov: number | null): void;
@@ -188,10 +187,10 @@ export class ZombiesClient {
 		this.host.setZoom(on ? WEAPONS[this.ws.weapon].zoomFov : null);
 	}
 
-	/** Keys 1-4. Returns false when the key should go to the map vote instead. */
+	/** Keys 1-4 (always handled). */
 	slot(n: number, now: number): boolean {
-		const a = slotAction(n, this.host.voteOpen(), this.loadoutOpen(now));
-		if (!a || a.kind === 'vote') return a === null;
+		const a = slotAction(n, this.loadoutOpen(now));
+		if (!a) return true;
 		if (this.team !== 'survivor') return true;
 		if (a.weapon === this.ws.weapon) return true;
 		this.equip(a.weapon);
@@ -235,7 +234,7 @@ export class ZombiesClient {
 			this.feed = [];
 			this.startSolo(now);
 			this.host.notice('Round restarted.');
-		} else this.host.notice('Zombie Run rounds restart by themselves after a win or a wipe (use !rtv to change map).');
+		} else this.host.notice('Zombie Run rounds restart by themselves after a win or a wipe (Esc › Servers to change map).');
 	}
 
 	// ---------------------------------------------------------------------

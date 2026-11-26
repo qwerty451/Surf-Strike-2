@@ -221,13 +221,6 @@ describe('tournament client mode', () => {
 		expect(view().bet?.canBet).toBe(false);
 	});
 
-	it('a map vote takes the number keys', () => {
-		const { mode, state, host } = setup();
-		state(trnState());
-		host.voteOpen = true;
-		expect(mode.slot(1, 1000)).toBe(false);
-	});
-
 	it('a bet outcome stays visible after the bets moved on (or ended)', () => {
 		const { mode, state, view, ev } = setup();
 		state(trnState({ duel: { match: 0, round: 1, hp: [100, 100], freeze: 5 }, bets: { match: 0, open: true, count: [0, 0] } }));

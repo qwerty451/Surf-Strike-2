@@ -29,7 +29,6 @@ export class TournamentMode implements ClientMode {
 			send: (msg) => host.send(msg),
 			name: (id) => host.name(id),
 			teleport: (pos, yaw) => host.teleport({ pos, yaw }),
-			voteOpen: () => host.voteOpen,
 			loggedIn: () => host.hud.account !== null,
 			zombieRenderer: () => host.renderer?.zombies ?? null,
 			infectedRenderer: () => host.renderer?.infected ?? null,

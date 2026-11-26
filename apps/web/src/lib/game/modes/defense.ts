@@ -23,7 +23,6 @@ export class DefenseMode implements ClientMode {
 			name: (id) => (host.online ? host.name(id) : host.myName()),
 			notice: (text) => host.notice(text),
 			teleport: (x, y, z, yaw) => host.teleport({ pos: { x, y, z }, yaw }),
-			voteOpen: () => host.voteOpen,
 			// Existing recordings through the infected names; heard from the camera (infected-listener.ts).
 			sound: (name, at) => host.audio.infected(name, soundSource(at, host.spec, host.remotes), soundListener(host.spec, host.eye), host.yaw),
 			setZoom: (fov) => {

@@ -9,8 +9,6 @@
 	import MapInfo from '#lib/ui/MapInfo.svelte';
 	import ConnectionStatus from '#lib/ui/ConnectionStatus.svelte';
 	import Chat from '#lib/ui/Chat.svelte';
-	import VotePanel from '#lib/ui/VotePanel.svelte';
-	import RtvRequest from '#lib/ui/RtvRequest.svelte';
 	import ScorePanel from '#lib/ui/ScorePanel.svelte';
 	import Crosshair from '#lib/ui/Crosshair.svelte';
 	import { crosshairOpacity } from '#lib/game/gunfeel.js';
@@ -79,12 +77,11 @@
 	<div class="hud" class:under-menu={hud.settingsOpen && !hud.authPanelOpen}>
 		{#if hud.hns}<HnsHud h={hud.hns} {now} part="screen" />{/if}
 		<div class="top-centre" data-top-hud>
-			<MapInfo mapId={hud.mapId} timeLeft={hud.mapTimeLeft} />
+			<MapInfo mapId={hud.mapId} mode={hud.gameMode} />
 			{#if hud.spectating}<SpectatorBar spectating={hud.spectating} />{/if}
 			{#if hud.tag}<TagHud tag={hud.tag} {now} />{/if}
 			{#if hud.hns}<HnsHud h={hud.hns} {now} part="top" />{/if}
 			{#if hud.tournament}<TournamentHud t={hud.tournament} {now} part="top" />{/if}
-			{#if hud.rtvRequest}<RtvRequest request={hud.rtvRequest} {now} interactive={!hud.pointerLocked} onvote={(yes) => api.rtvVote(yes)} />{/if}
 		</div>
 
 		<div class="top-right">
@@ -104,12 +101,8 @@
 		<div class="top-left">
 			{#if showPos}<PosReadout pos={hud.pos} speed={hud.speed} />{/if}
 			{#if hud.ban?.minimized}<BanScreen ban={hud.ban} {now} {api} />{/if}
-			<AwardPopups popups={hud.awardPopups} {now} max={hud.vote ? 2 : 5} />
+			<AwardPopups popups={hud.awardPopups} {now} max={5} />
 		</div>
-
-		{#if hud.vote}
-			<div class="left-middle"><VotePanel vote={hud.vote} {now} /></div>
-		{/if}
 
 		{#if hud.zombies}<ZombiesHud z={hud.zombies} {now} />{/if}
 		{#if hud.defense}
@@ -117,7 +110,6 @@
 				d={hud.defense}
 				{now}
 				interactive={!hud.pointerLocked}
-				side={!hud.vote}
 				onpick={(i) => api.modeUi({ kind: 'pick', index: i })}
 				onclose={() => api.modeUi({ kind: 'close' })}
 			/>
@@ -166,7 +158,6 @@
 				rows={hud.scoreboard}
 				mapTitle={hud.mapTitle}
 				mapId={hud.mapId}
-				timeLeft={hud.mapTimeLeft}
 				playerCount={hud.playerCount}
 				maxPlayers={hud.maxPlayers}
 				staged={hud.stageKind === 'stage'}
@@ -191,11 +182,8 @@
 			richest={hud.richest}
 			maps={hud.maps}
 			mapId={hud.mapId}
-			canChangeMap={hud.canChangeMap}
-			spectating={!!hud.spectating}
-			voteOpen={!!hud.vote}
-			requestOpen={!!hud.rtvRequest && !hud.rtvRequest.result}
-			rtvCooldown={hud.rtvCooldown}
+			lobbies={hud.lobbies}
+			playerCount={hud.playerCount}
 			adminState={hud.adminState}
 			adminNotice={hud.adminNotice}
 			blocked={hud.consoleOpen}
@@ -261,12 +249,6 @@
 		flex-direction: column;
 		align-items: flex-start;
 		gap: 8px;
-	}
-	.left-middle {
-		position: absolute;
-		left: 18px;
-		top: 50%;
-		transform: translateY(-50%);
 	}
 	.below-crosshair {
 		position: absolute;

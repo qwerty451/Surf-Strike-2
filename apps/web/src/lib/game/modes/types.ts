@@ -79,8 +79,6 @@ export interface ClientModeHost {
 	readonly renderServerTimeMs: number;
 	/** The spectated player (not in free-fly), else me: whose role the HUD shows. */
 	readonly viewId: number;
-	/** A map vote is open. */
-	readonly voteOpen: boolean;
 	cvar(name: string): number;
 	myName(): string;
 	/** Name of any player, me included. */
@@ -152,7 +150,7 @@ export interface ClientMode {
 	press?(action: 'attack' | 'attack2', down: boolean, now: number): void;
 	/** Every held button was let go (pointer lock or window focus lost, chat, console or a menu opened, spectating started or ended). */
 	release?(now: number): void;
-	/** Number key. False: the key goes to the map vote. */
+	/** Number key (`slot N`). False: the mode does not use it. */
 	slot?(n: number, now: number): boolean;
 	command?(cmd: ModeCommand, now: number): void;
 	/** The key of a bound mode command was let go (E held to repair). */

@@ -1,8 +1,10 @@
 /**
- * Lobby: connections, relay, chat, spectating and map rotation
- * (docs/architecture.md, docs/gameplay.md). Gamemode rules (race timer and
- * run validation, tag rounds) and scoreboard rows live in ./modes
- * (docs/modes.md); the lobby itself is mode-agnostic.
+ * Lobby: connections, accounts, relay, chat and spectating
+ * (docs/architecture.md, docs/gameplay.md). Every map has its own lobby (a
+ * `Room`, docs/architecture.md#lobbies): players pick one in the server
+ * browser and only see, hear and play with the players in it. Gamemode rules
+ * (race timer and run validation, tag rounds) and scoreboard rows live in
+ * ./modes (docs/modes.md); the lobby itself is mode-agnostic.
  */
 import { performance } from 'node:perf_hooks';
 import type { WebSocket } from 'ws';
@@ -14,13 +16,11 @@ import type {
 	MapRecordInfo,
 	NetState,
 	PlayerInfo,
-	RotationEvent,
 	ScoreRow,
 	ServerMessage,
 	RichEntry,
 	SnapshotEntry,
-	Vec3,
-	VoteOption
+	Vec3
 } from '@surf/shared';
 import {
 	CLOSE_IP_LIMIT,
@@ -34,7 +34,6 @@ import {
 	withTeleportSeq,
 	isRaceMode,
 	mapCvars as sharedMapCvars,
-	MapRotation,
 	MAX_CHAT,
 	MAX_NAME,
 	MAX_PLAYERS,
@@ -64,7 +63,7 @@ import type { LobbyMetricsHooks } from './metrics.ts';
 import { Shop } from './shop.ts';
 import { isClientTransport, WsClientTransport, type ClientTransport } from './transport.ts';
 import { createServerMode, type ModeHost, type ModeOptions, type ServerMode } from './modes/index.ts';
-import { observeRenderTime } from './modes/types.ts';
+import { EMPTY_RECORDS, observeRenderTime } from './modes/types.ts';
 import { PeerRtt } from './peer-rtt.ts';
 import { JUMP_SLACK, mapTeleport, nearPose, type ZoneKind } from './validation.ts';
 
@@ -72,11 +71,11 @@ export { SNAPSHOT_HZ };
 /** Gamemode rule ticks (tag contact checks), at least the snapshot rate. */
 export const MODE_TICK_HZ = TAG_TICK_HZ;
 export const SCOREBOARD_MS = 1000;
-export const ROTATION_MS = 100;
+/** `lobbies` (players per map) goes out at most this often. */
+export const LOBBIES_MS = 1000;
 export const PING_MS = 500;
 const PONG_TIMEOUT_MS = 10_000;
 const CLIENT_IDLE_TIMEOUT_MS = 10_000;
-export const TIME_LEFT_MS = 5000;
 export const HELLO_TIMEOUT_MS = 5_000;
 /** Maximum open sockets awaiting `hello` (separate from the 32 player slots). */
 export const MAX_PENDING_CONNECTIONS = 16;
@@ -103,16 +102,16 @@ export const RATE = {
 export interface LobbyOptions {
 	maps: MapDef[];
 	db: Db;
-	/** Map to start on; defaults to the first map. */
+	/** Lobby for clients whose hello names no (known, enabled) map; defaults to the first map. */
 	initialMap?: string;
-	/** Wall clock in ms, used for rotation and run timing (injectable for tests). */
+	/** Wall clock in ms, used for run timing (injectable for tests). */
 	now?: () => number;
 	rng?: () => number;
 	/** Casino rolls (default node:crypto; tests). */
 	casinoRandom?: () => number;
 	/** Monotonic clock in ms for account playtime (default: `now` when injected, else performance.now). */
 	playClock?: () => number;
-	/** Start interval timers (snapshot, scoreboard, rotation, ping). Default true. */
+	/** Start interval timers (snapshot, scoreboard, lobbies, ping). Default true. */
 	timers?: boolean;
 	/** Snapshot send rate in Hz (default SNAPSHOT_HZ = 32; 64 supported). */
 	snapshotHz?: number;
@@ -128,10 +127,6 @@ export interface LobbyOptions {
 	/** Optional runtime metrics hooks (/metrics). */
 	metrics?: LobbyMetricsHooks;
 	log?: (msg: string) => void;
-	/** Seconds per map (default MAP_DURATION); dev testing only, see server.ts. */
-	mapDuration?: number;
-	/** Seconds after map start before !rtv is allowed (default RTV_BLOCK). */
-	rtvBlock?: number;
 	/** Gamemode tuning (tests: shorter tag rounds). */
 	modes?: ModeOptions;
 	/** Admin account usernames, case-insensitive (default: none). */
@@ -173,6 +168,10 @@ interface Client {
 	/** Logged in with an admin account (docs/gameplay.md#admin); decided by the server only. */
 	admin: boolean;
 	helloed: boolean;
+	/** The map lobby this client is in; null before hello and after close. */
+	room: Room | null;
+	/** `room.map.id` (admin.ts reads it). */
+	mapId: string | null;
 	spectating: boolean;
 	targetId: number | null;
 	state: NetState | null;
@@ -196,6 +195,19 @@ interface Client {
 	closed: boolean;
 }
 
+/**
+ * One map's lobby (docs/architecture.md#lobbies): its players, its gamemode
+ * and its own economy (multiplier, round caps, activity). The mode exists
+ * while somebody is in the room and is disposed when the last player leaves,
+ * so an empty lobby costs nothing and starts fresh.
+ */
+interface Room {
+	readonly map: MapDef;
+	readonly members: Set<Client>;
+	mode: ServerMode | null;
+	economy: Economy;
+}
+
 const ZONE_KINDS = new Set<ZoneKind>(['start', 'stage', 'checkpoint', 'end']);
 const SPAWN_RETRY_MS = 250;
 const PLAYER_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
@@ -207,8 +219,11 @@ export function mapCvars(map: MapDef): Cvars {
 
 export class Lobby {
 	readonly clients = new Set<Client>();
-	readonly rotation: MapRotation;
 	private readonly maps: Map<string, MapDef>;
+	/** Map lobbies, created on first use and kept (their economy remembers caps and abuse). */
+	private readonly rooms = new Map<string, Room>();
+	/** Players per map last sent in `lobbies`. */
+	private lastLobbies = '';
 	private readonly db: Db;
 	private readonly now: () => number;
 	/** Monotonic server clock (ms) stamped into snapshots (injectable via playClock/now for tests). */
@@ -224,16 +239,20 @@ export class Lobby {
 	private readonly log: (msg: string) => void;
 	private readonly loginFailsByIp = new AttemptLimiter(AUTH_LIMITS.loginFailsPerConnection * 2);
 	private readonly registersByIp = new AttemptLimiter(AUTH_LIMITS.registersPerConnection * 2);
-	private map: MapDef;
 	private scheduler: TickScheduler | null = null;
-	private lastTimeLeftSent = 0;
+	/** Lobby for hellos without a (usable) map. */
+	private readonly defaultMapId: string;
+	private readonly clock: () => number;
 	private closing = false;
-	private mode: ServerMode;
 	private readonly modeOptions: ModeOptions;
 	private readonly rng: () => number;
 	private readonly accounts: Accounts;
-	/** Points, coins and abuse detection (docs/economy.md). */
-	readonly economy: Economy;
+	/**
+	 * Coin balance changes that do not belong to a map (shop, casino, admin,
+	 * welcome): reaches every connection. Never joined or ticked; awards are
+	 * paid by the room economies.
+	 */
+	private readonly bank: Economy;
 	/** Cosmetics: purchases and worn items (docs/economy.md#shop). */
 	private readonly shop: Shop<Client>;
 	/** Casino: rolls, bets and payouts (docs/economy.md#casino). */
@@ -241,8 +260,6 @@ export class Lobby {
 	/** Playtime and points of the accounts online (docs/gameplay.md#points-and-playtime). */
 	readonly stats: AccountStats;
 	readonly admin: AdminController<Client>;
-	/** Who started the open RTV request (name kept if they leave). */
-	private rtvInitiator: { id: number; name: string } | null = null;
 
 	constructor(opts: LobbyOptions) {
 		if (opts.maps.length === 0) {
@@ -260,18 +277,18 @@ export class Lobby {
 		this.log = opts.log ?? ((m) => console.log(m));
 		this.accounts = new Accounts(this.db, () => this.now());
 		this.stats = new AccountStats(this.db, opts.playClock ?? opts.now, this.log);
-		const initial = opts.initialMap && this.maps.has(opts.initialMap) ? opts.initialMap : opts.maps[0].id;
-		this.map = this.maps.get(initial)!;
+		this.defaultMapId = opts.initialMap && this.maps.has(opts.initialMap) ? opts.initialMap : opts.maps[0].id;
 		this.rng = opts.rng ?? Math.random;
 		this.modeOptions = opts.modes ?? {};
 		this.admin = this.createAdmin(opts.adminUsernames ?? parseAdminUsernames(undefined));
 		const clock = opts.playClock ?? opts.now ?? (() => performance.now());
 		this.serverClock = clock;
+		this.clock = clock;
 		this.snapHz = parseSnapshotHz(opts.snapshotHz);
-		this.economy = this.createEconomy(clock);
+		this.bank = this.createEconomy(null);
 		this.shop = new Shop<Client>({
 			db: this.db,
-			economy: () => this.economy,
+			economy: () => this.bank,
 			send: (p, m) => this.send(p, m),
 			broadcast: (m) => this.broadcast(m),
 			system: (text) => this.system(text),
@@ -290,23 +307,11 @@ export class Lobby {
 				send: (p, m) => this.send(p, m),
 				broadcast: (m) => this.broadcast(m),
 				system: (text) => this.system(text),
-				balance: (accountId) => this.economy.sendCoinsTo(accountId),
+				balance: (accountId) => this.bank.sendCoinsTo(accountId),
 				log: this.log
 			},
 			opts.casinoRandom
 		);
-		this.mode = this.createMode();
-		this.rotation = new MapRotation({
-			isEnabled: (id) => this.admin.isEnabled(id),
-			kindOf: (id) => this.maps.get(id)?.kind ?? '',
-			maps: [...this.maps.keys()],
-			current: initial,
-			now: this.now(),
-			rng: opts.rng,
-			mapDuration: opts.mapDuration,
-			rtvBlock: opts.rtvBlock
-		});
-		this.lastTimeLeftSent = this.now();
 		if (opts.timers !== false) {
 			const loopHz = Math.max(MODE_TICK_HZ, this.snapHz);
 			const tickMs = 1000 / loopHz;
@@ -331,7 +336,7 @@ export class Lobby {
 					}
 				},
 				periodic: [
-					{ everyMs: ROTATION_MS, run: () => this.updateRotation() },
+					{ everyMs: LOBBIES_MS, run: () => this.sendLobbies() },
 					{ everyMs: SCOREBOARD_MS, run: () => this.sendScoreboard() },
 					{ everyMs: PING_MS, run: () => this.sendPings() },
 					{ everyMs: PLAYTIME_FLUSH_MS, run: () => this.stats.flush() }
@@ -346,75 +351,130 @@ export class Lobby {
 		return this.snapHz;
 	}
 
+	/** Lobby that clients join when their hello names no usable map. */
 	get currentMap(): MapDef {
-		return this.map;
+		return this.maps.get(this.defaultMapId)!;
 	}
 
-	/** The current map's gamemode module. */
+	/** The default map lobby's gamemode module (created if nobody is there; tests). */
 	get gameMode(): ServerMode {
-		return this.mode;
+		return this.modeOf(this.room(this.defaultMapId));
+	}
+
+	/** The default map lobby's economy (tests). */
+	get economy(): Economy {
+		return this.room(this.defaultMapId).economy;
+	}
+
+	/** The gamemode module of a map's lobby, null while nobody is in it. */
+	modeFor(mapId: string): ServerMode | null {
+		return this.rooms.get(mapId)?.mode ?? null;
+	}
+
+	/** Economy of a map's lobby (tests). */
+	economyFor(mapId: string): Economy {
+		return this.room(mapId).economy;
+	}
+
+	/** Map lobby a client is in (by lobby id), or null. */
+	mapOf(id: number): string | null {
+		for (const c of this.clients) if (c.id === id) return c.mapId;
+		return null;
+	}
+
+	/** Players per map lobby, spectators included; empty lobbies are left out. */
+	lobbyCounts(): Record<string, number> {
+		const counts: Record<string, number> = {};
+		for (const [id, r] of this.rooms) if (r.members.size > 0) counts[id] = r.members.size;
+		return counts;
 	}
 
 	/** Advance gamemode rules (timer-driven at MODE_TICK_HZ; public for tests). */
 	tickMode(): void {
 		this.metrics?.recordModeTick();
-		this.mode.tick();
-		this.economy.tick();
+		for (const r of this.rooms.values()) {
+			if (r.members.size === 0) continue;
+			r.mode?.tick();
+			r.economy.tick();
+		}
 		this.casino.tick();
 		this.shop.tick();
 	}
 
-	private createEconomy(clock: () => number): Economy {
+	/** A map's lobby, created on first use. */
+	private room(mapId: string): Room {
+		let r = this.rooms.get(mapId);
+		if (!r) {
+			const map = this.maps.get(mapId);
+			if (!map) throw new Error(`unknown map ${mapId}`);
+			const room: Room = { map, members: new Set(), mode: null, economy: null as unknown as Economy };
+			room.economy = this.createEconomy(room);
+			this.rooms.set(mapId, room);
+			r = room;
+		}
+		return r;
+	}
+
+	/** The room's gamemode, created (with a fresh economy session) when the room had none. */
+	private modeOf(r: Room): ServerMode {
+		if (!r.mode) {
+			r.economy.useMap(r.map);
+			r.mode = this.createMode(r);
+		}
+		return r.mode;
+	}
+
+	/** `room` null: the bank (every connection, see `bank`). */
+	private createEconomy(room: Room | null): Economy {
 		const lobby = this;
 		return new Economy(
 			{
 				db: this.db,
 				now: () => this.now(),
-				clock,
+				clock: this.clock,
 				*players() {
-					for (const c of lobby.clients) if (c.helloed) yield c;
+					if (room) yield* room.members;
+					else for (const c of lobby.clients) if (c.helloed) yield c;
 				},
 				send: (p, msg) => this.send(p as Client, msg),
-				broadcast: (msg) => this.broadcast(msg),
+				broadcast: (msg) => (room ? this.broadcastRoom(room, msg) : this.broadcast(msg)),
 				systemTo: (p, text) => this.systemTo(p as Client, text),
 				totals: (accountId, pointsTotal) => this.stats.setPoints(accountId, pointsTotal),
 				isAdmin: (accountId) => this.admin.isAdminAccount(this.db.accountById(accountId)?.username),
 				ban: (accountId, reason, ms) => this.admin.autoBan(accountId, reason, ms),
 				abuseLogged: () => this.admin.pushState(),
 				log: (msg) => this.log(msg),
-				stillness: (p) => this.mode.stillness?.(p as Client) ?? null
+				stillness: (p) => room?.mode?.stillness?.(p as Client) ?? null
 			},
-			this.map
+			room?.map ?? this.currentMap
 		);
 	}
 
-	private createMode(): ServerMode {
-		const lobby = this;
-		const map = this.map;
+	private createMode(room: Room): ServerMode {
 		const host: ModeHost = {
-			map,
+			map: room.map,
 			db: this.db,
-			economy: this.economy.forMode(),
+			economy: room.economy.forMode(),
 			now: () => this.now(),
 			serverNow: () => this.serverClock(),
 			replaySaved: (mapId) => {
-				if (!this.closing && this.map.id === mapId) this.mode.replayChanged?.();
+				if (!this.closing) this.rooms.get(mapId)?.mode?.replayChanged?.();
 			},
 			rng: () => this.rng(),
 			*players() {
-				for (const c of lobby.clients) if (c.helloed) yield c;
+				yield* room.members;
 			},
 			send: (p, msg) => {
-				this.economy.sent(p as Client, msg);
+				room.economy.sent(p as Client, msg);
 				this.send(p as Client, msg);
 			},
-			broadcast: (msg, exceptId) => this.broadcast(msg, exceptId),
+			broadcast: (msg, exceptId) => this.broadcastRoom(room, msg, exceptId),
 			sendBinary: (p, data) => this.sendRaw(p as Client, Buffer.from(data), true),
 			broadcastBinary: (data, droppable = false) => {
 				const buf = Buffer.from(data);
-				for (const c of this.clients) if (c.helloed) this.sendRaw(c, buf, !droppable);
+				for (const c of room.members) this.sendRaw(c, buf, !droppable);
 			},
-			system: (text) => this.system(text),
+			system: (text) => this.systemRoom(room, text),
 			systemTo: (p, text) => this.systemTo(p as Client, text),
 			guestRunNotice: (p, text) => {
 				const c = p as Client;
@@ -436,18 +496,7 @@ export class Lobby {
 				broadcast: (msg) => this.broadcast(msg),
 				system: (text) => this.system(text),
 				log: (msg) => this.log(msg),
-				forceMap: (id) => {
-					const ev = this.rotation.forceMap(id, this.now());
-					if (ev) this.handleRotation([ev]);
-					return !!ev;
-				},
-				extend: (secs) => {
-					const ev = this.rotation.extendBy(secs, this.now());
-					if (!ev) return 'Not during a vote or a pending map change.';
-					this.handleRotation([ev]);
-					return null;
-				},
-				adjustCoins: (accountId, amount) => this.economy.adjust(accountId, amount),
+				adjustCoins: (accountId, amount) => this.bank.adjust(accountId, amount),
 				giveItem: (c, item) => this.shop.give(c, item, Date.now()),
 				takeItem: (c, item) => this.shop.take(c, item),
 				kickBanned: (c, ban) => this.kickBanned(c, ban)
@@ -519,7 +568,7 @@ export class Lobby {
 		this.scheduler?.stop();
 		this.scheduler = null;
 		this.stats.close();
-		this.economy.close();
+		for (const r of this.rooms.values()) r.economy.close();
 		for (const c of this.clients) {
 			if (c.helloTimer) clearTimeout(c.helloTimer);
 			c.helloTimer = null;
@@ -566,6 +615,8 @@ export class Lobby {
 			ip,
 			admin: false,
 			helloed: false,
+			room: null,
+			mapId: null,
 			spectating: false,
 			targetId: null,
 			state: null,
@@ -623,18 +674,10 @@ export class Lobby {
 		this.clients.delete(c);
 		if (c.accountId !== null) this.stats.leave(c.accountId, c);
 		if (!c.helloed || this.closing) return;
-		if (c.accountId !== null) this.economy.leaveAccount(c.accountId, c);
-		this.mode.leave(c);
-		this.economy.leave(c);
 		this.shop.announce(c);
-		this.rotation.removeVoter(String(c.id));
 		this.db.touch(c.playerId, Date.now());
-		this.broadcast({ type: 'leave', id: c.id });
-		this.system(`${c.name} left.`);
+		this.leaveRoom(c, `${c.name} left.`);
 		this.log(`leave #${c.id} ${c.name}`);
-		for (const o of this.clients) {
-			if (o.spectating && o.targetId === c.id) o.targetId = null;
-		}
 		this.admin.pushState();
 	}
 
@@ -655,11 +698,13 @@ export class Lobby {
 			if (!received) return;
 			const s = this.combatState(c, received);
 			if (!s) return;
+			const r = c.room;
+			if (!r) return;
 			c.state = s;
 			c.lastMessageAt = t;
 			if (s.renderServerTimeMs !== undefined) observeRenderTime(s.renderServerTimeMs, this.serverClock(), c);
-			this.economy.state(c, received);
-			this.mode.state(c, s);
+			r.economy.state(c, received);
+			r.mode?.state(c, s);
 			return;
 		}
 		const n = c.rate.json.hit(t);
@@ -693,18 +738,8 @@ export class Lobby {
 				if (typeof msg.text === 'string') this.onChat(c, msg.text);
 				return;
 			}
-			case 'vote':
-				if (typeof msg.option === 'number') this.handleRotation(this.rotation.castVote(String(c.id), msg.option, this.now()));
-				return;
-			case 'rtv':
-				return this.doRtv(c, null);
-			case 'rtvRequest':
-				return this.doRtv(c, typeof msg.mapId === 'string' ? msg.mapId : null);
-			case 'rtvVote':
-				if (typeof msg.yes === 'boolean') this.doRtvVote(c, msg.yes);
-				return;
 			case 'changeMap':
-				if (typeof msg.mapId === 'string') this.lonePlayerChangeMap(c, msg.mapId);
+				if (typeof msg.mapId === 'string') this.moveTo(c, msg.mapId);
 				return;
 			case 'spectate':
 				if (msg.targetId === null) this.setSpectate(c, false, null);
@@ -723,7 +758,7 @@ export class Lobby {
 			case 'logout':
 				return this.logout(c);
 			case 'getGhost':
-				if (typeof msg.map === 'string') this.mode.ghost?.(c, msg.map);
+				if (typeof msg.map === 'string') c.room?.mode?.ghost?.(c, msg.map);
 				return;
 			case 'fire':
 			case 'reload':
@@ -733,13 +768,13 @@ export class Lobby {
 			case 'callMoab':
 			case 'knife':
 				// Zombies/infected weapons and hide-and-seek knife (docs/modes.md); the mode validates every field.
-				if (!c.spectating) this.mode.message?.(c, msg);
+				if (!c.spectating) c.room?.mode?.message?.(c, msg);
 				return;
 			case 'zd': {
 				// Zombie Defense actions (docs/modes.md#zombie-defense); the mode validates every field.
 				const k = c.rate.zd.hit(t);
 				if (k > RATE.zd.kick) return this.kick(c, 'action flood');
-				if (k <= RATE.zd.limit && !c.spectating) this.mode.message?.(c, msg);
+				if (k <= RATE.zd.limit && !c.spectating) c.room?.mode?.message?.(c, msg);
 				return;
 			}
 			case 'boxOpen':
@@ -757,7 +792,7 @@ export class Lobby {
 				// Tournament bets (docs/economy.md#tournament): lobby spectators may bet too; the casino's rate limit.
 				const k = c.rate.casino.hit(t);
 				if (k > RATE.casino.kick) return this.kick(c, 'casino flood');
-				if (!c.closed && k <= RATE.casino.limit) this.mode.message?.(c, msg);
+				if (!c.closed && k <= RATE.casino.limit) c.room?.mode?.message?.(c, msg);
 				return;
 			}
 			case 'casinoBet':
@@ -836,49 +871,116 @@ export class Lobby {
 		c.helloTimer = null;
 		this.db.upsertPlayer(c.playerId, guestName, Date.now());
 
-		const players: PlayerInfo[] = [];
-		for (const o of this.clients) if (o.helloed) players.push(info(o));
+		const room = this.enterRoom(c, this.helloRoom(msg.map, admin));
 		this.send(c, {
 			type: 'welcome',
 			version: PROTOCOL_VERSION,
 			serverId: this.db.serverId,
 			selfId: c.id,
-			map: this.map.id,
-			mode: this.map.kind,
-			mapTimeLeft: this.timeLeft(),
-			players,
-			cvars: mapCvars(this.map),
-			records: this.mode.records(c),
+			map: room.map.id,
+			mode: room.map.kind,
+			players: [...room.members].map(info),
+			cvars: mapCvars(room.map),
+			records: this.modeOf(room).records(c),
 			account: resumed ? { username: resumed.account.username, admin } : null,
 			serverTime: this.serverClock(),
 			snapshotHz: this.snapHz
 		});
 		this.ping(c, performance.now());
 		this.send(c, this.admin.mapsMessage());
+		this.send(c, { type: 'lobbies', counts: this.lobbyCounts() });
 		if (!resumed && guest.taken) {
 			this.systemTo(c, `That name belongs to a registered account. Log in to use it; playing as ${guestName}.`);
 		}
 		if (msg.token !== undefined && !resumed) {
 			this.send(c, { type: 'auth', ok: false, error: 'Your session expired. Log in again.' });
 		}
-		this.economy.join(c);
+		room.economy.join(c);
 		this.shop.send(c);
 		this.casino.send(c);
-		this.mode.join(c);
-		this.broadcast({ type: 'join', player: info(c) }, c);
-		this.system(`${name} joined.`, c);
-		const v = this.rotation.vote;
-		if (v) {
-			this.send(c, {
-				type: 'voteStart',
-				options: v.options,
-				duration: Math.max(0, Math.round((v.endsAt - this.now()) / 1000)),
-				rtv: v.rtv
-			});
-			this.send(c, { type: 'voteUpdate', counts: v.counts.slice() });
+		this.modeOf(room).join(c);
+		this.broadcastRoom(room, { type: 'join', player: info(c) }, c);
+		this.systemRoom(room, `${name} joined.`, c);
+		this.log(`join #${c.id} ${name} (${room.map.id})`);
+		this.admin.pushState();
+	}
+
+	// -----------------------------------------------------------------------
+	// Map lobbies (docs/architecture.md#lobbies)
+
+	/** The lobby a hello lands in: the map it names when known and open to this player, else the default map. */
+	private helloRoom(mapId: unknown, admin: boolean): Room {
+		if (typeof mapId === 'string' && this.maps.has(mapId) && (admin || this.admin.isEnabled(mapId))) return this.room(mapId);
+		if (admin || this.admin.isEnabled(this.defaultMapId)) return this.room(this.defaultMapId);
+		const open = [...this.maps.keys()].find((id) => this.admin.isEnabled(id));
+		return this.room(open ?? this.defaultMapId);
+	}
+
+	/** Put a client into a room (no messages yet). */
+	private enterRoom(c: Client, room: Room): Room {
+		c.room = room;
+		c.mapId = room.map.id;
+		c.state = null;
+		c.spectating = false;
+		c.targetId = null;
+		room.members.add(c);
+		return room;
+	}
+
+	/** Take a client out of its room and tell the others there (`line`: system chat line). Empty rooms drop their mode. */
+	private leaveRoom(c: Client, line: string): void {
+		const room = c.room;
+		if (!room) return;
+		// Out of the member list first: the mode's leave sees the room without this player.
+		room.members.delete(c);
+		if (c.accountId !== null) room.economy.leaveAccount(c.accountId, c);
+		room.mode?.leave(c);
+		room.economy.leave(c);
+		c.room = null;
+		c.mapId = null;
+		c.state = null;
+		// Netcode state of the old map: a new relay timeline, no pending spawn.
+		c.relay = null;
+		c.pendingSpawn = null;
+		c.spawnFrame = null;
+		c.spectating = false;
+		c.targetId = null;
+		this.broadcastRoom(room, { type: 'leave', id: c.id });
+		this.systemRoom(room, line);
+		for (const o of room.members) {
+			if (o.spectating && o.targetId === c.id) o.targetId = null;
 		}
-		this.sendRtvState(c);
-		this.log(`join #${c.id} ${name}`);
+		if (room.members.size === 0 && room.mode) {
+			room.mode.dispose();
+			room.mode = null;
+		}
+	}
+
+	/**
+	 * `changeMap`, `!map`: move to the lobby of `mapId`. Players in a disabled
+	 * map's lobby stay, but only admins can join one.
+	 */
+	private moveTo(c: Client, mapId: string): void {
+		const map = this.maps.get(mapId);
+		if (!map) return this.systemTo(c, `Unknown map "${mapId.slice(0, 64)}".`);
+		if (c.room?.map === map) return this.systemTo(c, `You are already playing ${mapTitle(map)}.`);
+		if (!c.admin && !this.admin.isEnabled(map.id)) return this.systemTo(c, 'That map is disabled by an admin.');
+		this.leaveRoom(c, `${c.name} went to ${this.mapLabel(map.id)}.`);
+		const room = this.enterRoom(c, this.room(map.id));
+		const mode = this.modeOf(room);
+		this.send(c, {
+			type: 'mapChange',
+			map: map.id,
+			mode: map.kind,
+			cvars: mapCvars(map),
+			records: mode.records(c),
+			players: [...room.members].map(info)
+		});
+		room.economy.join(c);
+		mode.join(c);
+		this.broadcastRoom(room, { type: 'join', player: info(c) }, c);
+		this.systemRoom(room, `${c.name} joined.`, c);
+		this.log(`move #${c.id} ${c.name} ${map.id}`);
 		this.admin.pushState();
 	}
 
@@ -942,7 +1044,7 @@ export class Lobby {
 		this.signIn(c, outcome.account, session.hash, session.token);
 		this.log(`${msg.type} #${c.id} account ${outcome.account.id} ${outcome.account.username}`);
 		if (msg.type === 'register') {
-			this.economy.welcome(outcome.account.id);
+			this.bank.welcome(outcome.account.id);
 			this.releaseName(outcome.account.username, c);
 		}
 	}
@@ -955,9 +1057,9 @@ export class Lobby {
 		c.admin = this.admin.isAdminAccount(account.username);
 		const old = c.name;
 		this.setName(c, account.username);
-		if (old !== account.username) this.system(`${old} logged in as ${account.username}.`);
-		this.send(c, { type: 'auth', ok: true, username: account.username, token, records: this.mode.records(c), admin: c.admin });
-		this.economy.account(c);
+		if (old !== account.username) this.systemNear(c, `${old} logged in as ${account.username}.`);
+		this.send(c, { type: 'auth', ok: true, username: account.username, token, records: this.recordsOf(c), admin: c.admin });
+		c.room?.economy.account(c);
 		this.shop.account(c);
 		this.casino.send(c);
 		this.admin.pushState();
@@ -971,7 +1073,7 @@ export class Lobby {
 			const old = o.name;
 			o.guestName = this.guestNameFor(o.name, o.playerId).name;
 			this.setName(o, o.guestName);
-			this.system(`${old} is now ${o.name} (the name was registered).`);
+			this.systemNear(o, `${old} is now ${o.name} (the name was registered).`);
 		}
 	}
 
@@ -980,15 +1082,15 @@ export class Lobby {
 			if (c.sessionHash) this.accounts.logout(c.sessionHash);
 			const old = c.name;
 			this.stats.leave(c.accountId, c);
-			this.economy.leaveAccount(c.accountId, c);
+			c.room?.economy.leaveAccount(c.accountId, c);
 			c.accountId = null;
 			c.sessionHash = null;
 			c.admin = false;
 			c.guestName = this.guestNameFor(c.guestName, c.playerId).name;
 			this.setName(c, c.guestName);
-			if (old !== c.name) this.system(`${old} logged out and is now ${c.name}.`);
+			if (old !== c.name) this.systemNear(c, `${old} logged out and is now ${c.name}.`);
 		}
-		this.send(c, { type: 'auth', ok: true, username: null, records: this.mode.records(c), admin: false });
+		this.send(c, { type: 'auth', ok: true, username: null, records: this.recordsOf(c), admin: false });
 		this.shop.account(c);
 		this.casino.send(c);
 		this.admin.pushState();
@@ -1002,12 +1104,17 @@ export class Lobby {
 		if (!ZONE_KINDS.has(msg.kind) || !Number.isInteger(msg.index) || !Number.isInteger(msg.tick) || msg.tick < 0) {
 			return;
 		}
-		this.mode.zone(c, msg.kind, msg.index, msg.tick);
+		c.room?.mode?.zone(c, msg.kind, msg.index, msg.tick);
 	}
 
-	/** Race records of an account on the current map (empty in non-race modes). */
+	/** A client's race records in its lobby (empty in non-race modes). */
+	private recordsOf(c: Client): MapRecordInfo {
+		return c.room ? this.modeOf(c.room).records(c) : EMPTY_RECORDS;
+	}
+
+	/** Race records of an account on the default map (empty in non-race modes). */
 	records(accountId: number | null): MapRecordInfo {
-		return this.mode.records({ id: -1, playerId: '', accountId, name: '', spectating: false, state: null, ping: 0 });
+		return this.gameMode.records({ id: -1, playerId: '', accountId, name: '', spectating: false, state: null, ping: 0 });
 	}
 
 	// -----------------------------------------------------------------------
@@ -1018,15 +1125,17 @@ export class Lobby {
 		if (!text) return;
 		const cmd = parseCommand(text);
 		if (!cmd) {
-			this.broadcast({ type: 'chat', from: c.name, fromId: c.id, text, ...(c.admin ? { admin: true } : {}) });
+			if (c.room) this.broadcastRoom(c.room, { type: 'chat', from: c.name, fromId: c.id, text, ...(c.admin ? { admin: true } : {}) });
 			return;
 		}
 		switch (cmd.cmd) {
 			case 'rtv':
-				return this.doRtv(c, null);
+				return this.systemTo(c, 'There are no map votes: every map has its own lobby. Pick one in the server browser (Esc › Servers) or type !map <name>.');
+			case 'map':
+				return this.mapCommand(c, cmd.name);
 			case 'top':
 			case 'pb':
-				if (!this.mode.command(c, cmd)) this.systemTo(c, `!${cmd.cmd} is not available in this mode.`);
+				if (!c.room?.mode?.command(c, cmd)) this.systemTo(c, `!${cmd.cmd} is not available in this mode.`);
 				return;
 			case 'spec':
 				return this.specCommand(c, cmd.name);
@@ -1057,7 +1166,7 @@ export class Lobby {
 		c.guestName = name;
 		this.setName(c, name);
 		this.db.rename(c.playerId, name);
-		this.system(`${old} is now known as ${name}.`);
+		this.systemNear(c, `${old} is now known as ${name}.`);
 		this.admin.pushState();
 	}
 
@@ -1065,17 +1174,34 @@ export class Lobby {
 	private setName(c: Client, name: string): void {
 		if (name === c.name) return;
 		c.name = name;
-		this.broadcast({ type: 'rename', id: c.id, name });
+		if (c.room) this.broadcastRoom(c.room, { type: 'rename', id: c.id, name });
+	}
+
+	/** `!map`: list the lobbies with players, or join the map whose title or id matches best. */
+	private mapCommand(c: Client, query: string): void {
+		const q = query.trim().toLowerCase();
+		if (!q) {
+			const busy = Object.entries(this.lobbyCounts()).sort((a, b) => b[1] - a[1]);
+			this.systemTo(c, busy.length ? `Playing now: ${busy.map(([id, n]) => `${this.mapLabel(id)} (${n})`).join(', ')}` : 'Nobody is playing.');
+			this.systemTo(c, 'Join a map with !map <name>, or pick one in the server browser (Esc › Servers).');
+			return;
+		}
+		const all = [...this.maps.values()];
+		const hit =
+			all.find((m) => m.id.toLowerCase() === q || mapTitle(m).toLowerCase() === q) ??
+			all.find((m) => m.id.toLowerCase().includes(q) || mapTitle(m).toLowerCase().includes(q));
+		if (!hit) return this.systemTo(c, `No map matching "${query.slice(0, 64)}".`);
+		this.moveTo(c, hit.id);
 	}
 
 	private specCommand(c: Client, name: string): void {
 		if (!name) {
 			if (c.spectating) return this.setSpectate(c, false, null);
-			const target = [...this.clients].find((o) => o !== c && o.helloed && !o.spectating);
+			const target = [...(c.room?.members ?? [])].find((o) => o !== c && !o.spectating);
 			return this.setSpectate(c, true, target?.id ?? null);
 		}
 		const q = name.toLowerCase();
-		const others = [...this.clients].filter((o) => o !== c && o.helloed && !o.spectating);
+		const others = [...(c.room?.members ?? [])].filter((o) => o !== c && !o.spectating);
 		const target =
 			others.find((o) => o.name.toLowerCase() === q) ?? others.find((o) => o.name.toLowerCase().includes(q));
 		if (!target) return this.systemTo(c, `No player matching "${name}".`);
@@ -1084,21 +1210,22 @@ export class Lobby {
 
 	/** Only server spawns and plausible map teleports break the combat pose history. */
 	private combatState(c: Client, state: NetState): NetState | null {
-		if (isRaceMode(this.mode.id)) return state;
+		const map = c.room?.map;
+		if (!map || isRaceMode(map.kind)) return state;
 		if ((state.spawnSeq ?? 0) !== c.spawnSeq) return null;
 		const clientSeq = teleportSeq(state.flags);
 		let teleported = false;
 		if (c.pendingSpawn) {
 			const elapsed = Math.max(0, this.serverClock() - c.spawnAt) / 1000;
 			// Movement clamps each axis. Allow diagonal travel and the usual position slack.
-			const axisLimit = Math.min(mapCvars(this.map).sv_maxvelocity, MAX_VELOCITY_HARD);
+			const axisLimit = Math.min(mapCvars(map).sv_maxvelocity, MAX_VELOCITY_HARD);
 			const reach = Math.sqrt(3) * axisLimit * elapsed + JUMP_SLACK;
 			if (!nearPose(state, c.pendingSpawn, reach)) return null;
 			c.pendingSpawn = null;
 			c.spawnFrame = null;
 			teleported = true;
 		} else if (c.state && (clientSeq !== c.clientTeleportSeq || (state.flags & FLAG_TELEPORTED) !== 0)) {
-			teleported = mapTeleport(this.map, c.state, state);
+			teleported = mapTeleport(map, c.state, state);
 		}
 		c.clientTeleportSeq = clientSeq;
 		if (teleported) {
@@ -1111,8 +1238,10 @@ export class Lobby {
 	}
 
 	private setSpectate(c: Client, spectating: boolean, targetId: number | null): void {
+		const room = c.room;
+		if (!room) return;
 		if (spectating) {
-			const target = [...this.clients].find((o) => o.id === targetId && o !== c && o.helloed && !o.spectating);
+			const target = [...room.members].find((o) => o.id === targetId && o !== c && !o.spectating);
 			targetId = target ? target.id : null;
 		} else {
 			targetId = null;
@@ -1121,55 +1250,16 @@ export class Lobby {
 		const changed = c.spectating !== spectating;
 		c.spectating = spectating;
 		c.targetId = targetId;
+		if (changed) c.state = null;
+		this.broadcastRoom(room, { type: 'spectating', id: c.id, spectating, targetId });
 		if (changed) {
 			c.state = null;
 			if (c.relay) c.relay.sample = null;
 			c.pendingSpawn = null;
 			c.spawnFrame = null;
-			if (spectating) this.rotation.removeVoter(String(c.id));
+			room.economy.spectate(c);
+			room.mode?.spectate(c, spectating);
 		}
-		this.broadcast({ type: 'spectating', id: c.id, spectating, targetId });
-		if (changed) {
-			this.economy.spectate(c);
-			this.mode.spectate(c, spectating);
-		}
-	}
-
-	/** `!rtv`, `rtv` or a Change map click with others here: start (or agree to) an RTV request. */
-	private doRtv(c: Client, mapId: string | null): void {
-		if (c.spectating) return this.systemTo(c, 'Spectators cannot rock the vote.');
-		const starting = !this.rotation.request;
-		const res = this.rotation.requestRtv(String(c.id), this.voters(), this.now(), mapId);
-		if (!Array.isArray(res)) return this.systemTo(c, res.error);
-		if (starting) this.rtvInitiator = { id: c.id, name: c.name };
-		this.handleRotation(res);
-	}
-
-	private doRtvVote(c: Client, yes: boolean): void {
-		if (c.spectating) return this.systemTo(c, 'Spectators cannot vote.');
-		const res = this.rotation.rtvVote(String(c.id), yes, this.voters(), this.now());
-		if (!Array.isArray(res)) return this.systemTo(c, res.error);
-		this.handleRotation(res);
-	}
-
-	/** Open RTV request and cooldown for a joining client. */
-	private sendRtvState(c: Client): void {
-		const r = this.rotation.request;
-		if (r) {
-			this.send(c, {
-				type: 'rtvRequest',
-				started: true,
-				initiatorId: this.rtvInitiator?.id ?? -1,
-				initiator: this.rtvInitiator?.name ?? '?',
-				mapId: r.mapId,
-				duration: Math.max(0, (r.endsAt - this.now()) / 1000),
-				yes: r.yes.size,
-				no: r.no.size,
-				needed: r.needed
-			});
-		}
-		const wait = this.rotation.rtvAvailableIn(this.now());
-		if (wait) this.send(c, { type: 'rtvCooldown', seconds: wait.seconds, reason: wait.reason });
 	}
 
 	private mapLabel(id: string): string {
@@ -1177,176 +1267,50 @@ export class Lobby {
 		return m ? `${modeOf(m).label} · ${mapTitle(m)}` : id;
 	}
 
-	/**
-	 * Esc panel map switch: only when `c` is the only connected client
-	 * (spectators count as people in the lobby). Same effect as a vote win.
-	 */
-	private lonePlayerChangeMap(c: Client, mapId: string): void {
-		for (const o of this.clients) {
-			if (o !== c && o.helloed) return this.systemTo(c, 'Others are here: picking a map starts a map vote request (!rtv).');
-		}
-		if (!this.maps.has(mapId)) return this.systemTo(c, `Unknown map "${mapId.slice(0, 64)}".`);
-		if (!c.admin && !this.admin.isEnabled(mapId)) return this.systemTo(c, 'That map is disabled by an admin.');
-		const ev = this.rotation.forceMap(mapId, this.now());
-		if (!ev) return this.systemTo(c, `Map "${mapId.slice(0, 64)}" is not in the rotation.`);
-		this.handleRotation([ev]);
-	}
-
-	// -----------------------------------------------------------------------
-	// Rotation
-
-	private voters(): number {
-		let n = 0;
-		for (const c of this.clients) if (c.helloed && !c.spectating) n++;
-		return n;
-	}
-
-	timeLeft(): number {
-		return Math.ceil(this.rotation.timeLeft(this.now()));
-	}
-
-	/** Advance the rotation (called at ~10 Hz by the timer; public for tests). */
-	updateRotation(): void {
-		this.handleRotation(this.rotation.update(this.now(), this.voters()));
-		const t = this.now();
-		if (t - this.lastTimeLeftSent >= TIME_LEFT_MS) this.sendTimeLeft();
-	}
-
-	private sendTimeLeft(): void {
-		this.lastTimeLeftSent = this.now();
-		this.broadcast({ type: 'timeLeft', mapTimeLeft: this.timeLeft() });
-	}
-
-	private optionLabel(o: VoteOption): string {
-		return o.kind === 'extend' ? 'Extend 10 min' : this.mapLabel(o.mapId);
-	}
-
-	private handleRotation(events: RotationEvent[]): void {
-		for (const e of events) {
-			switch (e.type) {
-				case 'voteStart':
-					this.broadcast({ type: 'voteStart', options: e.options, duration: e.duration, rtv: e.rtv });
-					this.system(
-						`${e.rtv ? 'Rock the vote! ' : ''}Vote for the next map (${e.duration} s): ` +
-							e.options.map((o, i) => `${i + 1}. ${this.optionLabel(o)}`).join('  ')
-					);
-					break;
-				case 'voteUpdate':
-					this.broadcast({ type: 'voteUpdate', counts: e.counts });
-					break;
-				case 'voteEnd':
-					this.broadcast({ type: 'voteEnd', winner: e.winner, countdown: e.countdown });
-					this.system(
-						e.winner.kind === 'extend'
-							? 'Vote over: map extended by 10 minutes.'
-							: `Vote over: next map ${this.optionLabel(e.winner)} in ${e.countdown} s.`
-					);
-					break;
-				case 'extended':
-					this.sendTimeLeft();
-					break;
-				case 'mapChange':
-					this.changeMap(e.map);
-					break;
-				case 'rtvRequest': {
-					const who = this.rtvInitiator ?? { id: -1, name: '?' };
-					this.broadcast({
-						type: 'rtvRequest',
-						started: e.started,
-						initiatorId: who.id,
-						initiator: who.name,
-						mapId: e.mapId,
-						duration: e.duration,
-						yes: e.yes,
-						no: e.no,
-						needed: e.needed
-					});
-					if (e.started) {
-						const nom = e.mapId ? ` (${this.mapLabel(e.mapId)})` : '';
-						this.system(`${who.name} wants to vote for a new map${nom}. Press 1 = yes, 2 = no.`);
-					}
-					break;
-				}
-				case 'rtvRequestEnd':
-					this.rtvInitiator = null;
-					this.broadcast({ type: 'rtvRequestEnd', passed: e.passed, reason: e.reason, cooldown: e.cooldown });
-					if (e.passed) this.system('Map vote request passed.');
-					else if (e.reason !== 'cancelled') this.system(`Map vote request declined. Next request in ${e.cooldown} s.`);
-					break;
-			}
-		}
-	}
-
-	private changeMap(id: string): void {
-		const map = this.maps.get(id);
-		if (!map) return;
-		this.map = map;
-		this.mode.dispose();
-		this.economy.useMap(map);
-		this.mode = this.createMode();
-		const cvars = mapCvars(map);
-		const timeLeft = this.timeLeft();
-		for (const c of this.clients) {
-			if (!c.helloed) continue;
-			c.state = null;
-			c.relay = null;
-			c.pendingSpawn = null;
-			c.spawnFrame = null;
-			this.send(c, {
-				type: 'mapChange',
-				map: map.id,
-				mode: map.kind,
-				mapTimeLeft: timeLeft,
-				cvars,
-				records: this.mode.records(c)
-			});
-			this.mode.join(c);
-		}
-		this.lastTimeLeftSent = this.now();
-		this.rtvInitiator = null;
-		const wait = this.rotation.rtvAvailableIn(this.now());
-		if (wait) this.broadcast({ type: 'rtvCooldown', seconds: wait.seconds, reason: wait.reason });
-		this.system(`Map changed to ${mapTitle(map)}.`);
-		this.log(`map ${map.id}`);
-	}
-
 	// -----------------------------------------------------------------------
 	// Periodic sends
 
+	/** Each lobby gets the states of its own players. */
 	sendSnapshot(): void {
 		const now = this.serverClock();
 		this.metrics?.recordSnapshotTick();
-		const entries: SnapshotEntry[] = [];
-		for (const c of this.clients) {
-			if (!c.helloed || c.spectating) continue;
-			if (c.spawnFrame && now - c.spawnSentAt >= SPAWN_RETRY_MS) {
-				c.spawnSentAt = now;
-				this.sendRaw(c, c.spawnFrame);
-			}
-			if (!c.state) continue;
-			const relay = c.relay ??= { timeline: new SnapshotTimeline(), sample: null };
-			const at = relay.timeline.push(c.state.tick, now);
-			if (at !== null) relay.sample = { state: c.state, at };
-			if (!relay.sample) continue;
-			entries.push({
-				id: c.id,
-				...relay.sample.state,
-				sampleTimeMs: snapshotSampleTimeMs(relay.sample.at, now),
-				sourceIdle: relay.timeline.sourceIdle
-			});
-		}
-		if (entries.length === 0) return;
-		this.mode.snapshot?.(entries);
+		// One sequence number per tick, shared by every lobby: it keeps rising for a client that changes lobby.
 		this.snapshotSeq = (this.snapshotSeq + 1) & 0xffff;
-		const buf = Buffer.from(encodeSnapshot(entries, now, this.snapshotSeq));
-		for (const c of this.clients) if (c.helloed) this.sendRaw(c, buf);
+		for (const room of this.rooms.values()) {
+			if (room.members.size === 0) continue;
+			const entries: SnapshotEntry[] = [];
+			for (const c of room.members) {
+				if (c.spectating) continue;
+				if (c.spawnFrame && now - c.spawnSentAt >= SPAWN_RETRY_MS) {
+					c.spawnSentAt = now;
+					this.sendRaw(c, c.spawnFrame);
+				}
+				if (!c.state) continue;
+				const relay = c.relay ??= { timeline: new SnapshotTimeline(), sample: null };
+				const at = relay.timeline.push(c.state.tick, now);
+				if (at !== null) relay.sample = { state: c.state, at };
+				if (!relay.sample) continue;
+				entries.push({
+					id: c.id,
+					...relay.sample.state,
+					sampleTimeMs: snapshotSampleTimeMs(relay.sample.at, now),
+					sourceIdle: relay.timeline.sourceIdle
+				});
+			}
+			if (entries.length === 0) continue;
+			room.mode?.snapshot?.(entries);
+			const buf = Buffer.from(encodeSnapshot(entries, now, this.snapshotSeq));
+			for (const c of room.members) this.sendRaw(c, buf);
+		}
 	}
 
-	/** The mode's rows plus what is the same in every mode: admin marker and account totals. */
-	scoreRows(): ScoreRow[] {
+	/** A lobby's rows (default: the default map's) plus what is the same in every mode: admin marker and account totals. */
+	scoreRows(mapId = this.defaultMapId): ScoreRow[] {
+		const room = this.rooms.get(mapId);
+		if (!room?.mode) return [];
 		const byId = new Map<number, Client>();
-		for (const c of this.clients) if (c.helloed) byId.set(c.id, c);
-		return this.mode.scoreRows().map((r) => {
+		for (const c of room.members) byId.set(c.id, c);
+		return room.mode.scoreRows().map((r) => {
 			const c = byId.get(r.id);
 			const totals = c && c.accountId !== null ? this.stats.totals(c.accountId) : null;
 			return {
@@ -1370,7 +1334,19 @@ export class Lobby {
 
 	sendScoreboard(): void {
 		if (this.playerCount === 0) return;
-		this.broadcast({ type: 'scoreboard', rows: this.scoreRows(), richest: this.richest() });
+		const richest = this.richest();
+		for (const [id, room] of this.rooms) {
+			if (room.members.size > 0) this.broadcastRoom(room, { type: 'scoreboard', rows: this.scoreRows(id), richest });
+		}
+	}
+
+	/** `lobbies` to everyone when a count changed since the last one (timer at LOBBIES_MS; public for tests). */
+	sendLobbies(): void {
+		const counts = this.lobbyCounts();
+		const key = JSON.stringify(Object.entries(counts).sort());
+		if (key === this.lastLobbies) return;
+		this.lastLobbies = key;
+		this.broadcast({ type: 'lobbies', counts });
 	}
 
 	sendPings(): void {
@@ -1427,8 +1403,24 @@ export class Lobby {
 		for (const c of this.clients) if (c.helloed && c.id !== skipId) this.sendRaw(c, s);
 	}
 
+	private broadcastRoom(room: Room, msg: ServerMessage, except?: Client | number): void {
+		const s = JSON.stringify(msg);
+		const skipId = typeof except === 'number' ? except : except?.id;
+		for (const c of room.members) if (c.id !== skipId) this.sendRaw(c, s);
+	}
+
+	/** System chat line to every lobby. */
 	private system(text: string, except?: Client): void {
 		this.broadcast({ type: 'chat', from: null, fromId: null, text: text.slice(0, 512), system: true }, except);
+	}
+
+	private systemRoom(room: Room, text: string, except?: Client): void {
+		this.broadcastRoom(room, { type: 'chat', from: null, fromId: null, text: text.slice(0, 512), system: true }, except);
+	}
+
+	/** System chat line to the lobby `c` is in. */
+	private systemNear(c: Client, text: string): void {
+		if (c.room) this.systemRoom(c.room, text);
 	}
 
 	private systemTo(c: Client, text: string): void {

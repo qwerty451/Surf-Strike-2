@@ -12,7 +12,7 @@ describe('binds', () => {
 		expect(b.get('ctrl')).toBe('+duck');
 		expect(b.get('y')).toBe('messagemode');
 		expect(b.get('tab')).toBe('+showscores');
-		expect(b.get('3')).toBe('vote 3');
+		expect(b.get('3')).toBe('slot 3');
 		expect(b.get('m')).toBe('spectate');
 		expect(b.get('r')).toBe('restart');
 		expect(b.get('`')).toBe('toggleconsole');
@@ -39,15 +39,16 @@ describe('binds', () => {
 		expect(b.get('e')).toBeUndefined();
 		expect(b.get('f')).toBe('beacon');
 	});
-	it('gives an older table the Zombie Defense keys (5-9, B shop, F ready) once', () => {
+	it('gives an older table the Zombie Defense and Tournament keys (5-9, B shop, F ready, G bracket) once', () => {
 		const store = memoryStore();
 		writeJson(store, STORAGE_KEYS.binds, { w: '+forward', e: 'beacon', n: 'moab' });
 		writeJson(store, `${STORAGE_KEYS.binds}.offered`, ['e', 'n']);
 		const a = new Binds(store);
-		expect(a.get('5')).toBe('vote 5');
-		expect(a.get('9')).toBe('vote 9');
+		expect(a.get('5')).toBe('slot 5');
+		expect(a.get('9')).toBe('slot 9');
 		expect(a.get('b')).toBe('shop');
 		expect(a.get('f')).toBe('ready');
+		expect(a.get('g')).toBe('+bracket');
 		a.unbind('b');
 		expect(new Binds(store).get('b')).toBeUndefined();
 	});

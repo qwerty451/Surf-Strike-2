@@ -108,7 +108,6 @@ export interface DfHost {
 	name(id: number): string;
 	notice(text: string): void;
 	teleport(x: number, y: number, z: number, yaw: number): void;
-	voteOpen(): boolean;
 	sound(name: DfSound, at?: Vec3): void;
 	/** Zoom: horizontal FOV at 4:3, or null for the cvar FOV. */
 	setZoom(fov: number | null): void;
@@ -291,9 +290,8 @@ export class DefenseClient {
 		this.host.setZoom(on ? WEAPONS[this.held].zoomFov : null);
 	}
 
-	/** Number keys: a menu row while a menu is open, else a weapon. False: the key goes to the map vote. */
+	/** Number keys: a menu row while a menu is open, else a weapon. False: the key is not used. */
 	slot(n: number, now: number): boolean {
-		if (this.host.voteOpen()) return false;
 		if (this.menu) {
 			this.pick(n - 1, now);
 			return true;
@@ -427,7 +425,7 @@ export class DefenseClient {
 			this.resetWeapons();
 			this.startSolo(now);
 			this.host.notice('New game.');
-		} else this.host.notice('Zombie Defense games restart by themselves when everyone is down (use !rtv to change map).');
+		} else this.host.notice('Zombie Defense games restart by themselves when everyone is down (Esc › Servers to change map).');
 	}
 
 	// ---------------------------------------------------------------------

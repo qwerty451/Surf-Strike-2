@@ -142,6 +142,7 @@ test('modeOptions: --fast timers and explicit overrides', () => {
 
 test('gameUrl and listText', () => {
 	assert.equal(gameUrl(5173, 27016), 'http://localhost:5173/?server=ws://localhost:27016/ws');
+	assert.equal(gameUrl(5173, 27016, 'surf_ember'), 'http://localhost:5173/?server=ws://localhost:27016/ws&map=surf_ember');
 	const txt = listText();
 	for (const mode of GAME_MODE_IDS) assert.ok(txt.includes(`  ${mode}`), mode);
 	for (const m of MAPS) assert.ok(txt.includes(m.id), m.id);

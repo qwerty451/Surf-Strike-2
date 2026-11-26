@@ -75,7 +75,6 @@ function spray(weapon: WeaponId, ms: number, extra: Record<string, unknown> = {}
 		name: (id) => `P${id}`,
 		notice: () => {},
 		teleport: () => {},
-		voteOpen: () => false,
 		sound: () => {},
 		setZoom: () => {},
 		push: () => {},

@@ -39,7 +39,6 @@ export class InfectedMode implements ClientMode {
 			name: (id) => host.name(id),
 			notice: (text) => host.notice(text),
 			teleport: (x, y, z, yaw) => host.teleport({ pos: { x, y, z }, yaw }),
-			voteOpen: () => host.voteOpen,
 			// Heard from the camera: the spectator camera while spectating (infected-listener.ts).
 			sound: (name, at) => host.audio.infected(name, soundSource(at, host.spec, host.remotes), soundListener(host.spec, host.eye), host.yaw),
 			// The zoom eases: the camera follows `zoomProgress` every frame instead of snapping here.
@@ -94,7 +93,7 @@ export class InfectedMode implements ClientMode {
 	chatRestart(): void {
 		if (this.client.localFallouts) {
 			if (!this.host.spec) this.respawn();
-		} else this.host.notice('Infected rounds restart by themselves (use !rtv to change map).');
+		} else this.host.notice('Infected rounds restart by themselves (Esc › Servers to change map).');
 	}
 
 	respawn(): void {

@@ -73,7 +73,6 @@ export interface TrnHost extends FxHost {
 	name(id: number): string;
 	/** Move the local player (spawn), velocity zeroed. */
 	teleport(pos: Vec3, yaw: number): void;
-	voteOpen(): boolean;
 	/** Logged-in account (bets need coins). */
 	loggedIn(): boolean;
 	/** Viewmodel and tracers. */
@@ -238,9 +237,8 @@ export class TournamentClient {
 		this.viewKey = '';
 	}
 
-	/** Duelists: 1 sniper, 2 pistol, 3 knife. Spectators who may bet: 1 / 2 bet on side a / b. False: the key goes to the map vote. */
+	/** Duelists: 1 sniper, 2 pistol, 3 knife. Spectators who may bet: 1 / 2 bet on side a / b. False: the key is not used. */
 	slot(n: number, now: number): boolean {
-		if (this.host.voteOpen()) return false;
 		if (this.role !== 'duelist' || this.spectating) {
 			const sides = betSides(this.state);
 			if (sides && (n === 1 || n === 2) && canBet(this.betInput()) && !this.hasBet(sides.match)) {
@@ -574,7 +572,7 @@ export class TournamentClient {
 		}
 		const scopeT = WEAPONS[w].zoomFov !== null ? Math.max(0, Math.min(1, (a - SCOPE_OVERLAY_FROM) / (1 - SCOPE_OVERLAY_FROM))) : 0;
 		const frozen = this.frozen(now);
-		const key = `${this.viewKey}|${a.toFixed(3)}|${scopeT.toFixed(3)}|${this.ws.mag}|${this.ws.reserve}|${this.ws.reloadEndsAt}|${w}|${frozen}|${this.host.viewId()}|${this.host.online()}|${this.host.loggedIn()}|${this.host.voteOpen()}`;
+		const key = `${this.viewKey}|${a.toFixed(3)}|${scopeT.toFixed(3)}|${this.ws.mag}|${this.ws.reserve}|${this.ws.reloadEndsAt}|${w}|${frozen}|${this.host.viewId()}|${this.host.online()}|${this.host.loggedIn()}`;
 		if (this.view && key === this.viewKey) return this.view;
 		this.viewKey = key;
 		this.view = this.buildView(a, scopeT);

@@ -1,6 +1,6 @@
 # Gameplay
 
-This page covers the race modes (surf, bhop). Tag, infected, Zombie Run and hide and seek have their own rules: see [modes.md](modes.md#tag), [modes.md](modes.md#infected), [modes.md](modes.md#zombies) and [modes.md](modes.md#hide-and-seek). Chat, spectating, map rotation, solo mode and the lobby apply to every mode.
+This page covers the race modes (surf, bhop). Tag, infected, Zombie Run and hide and seek have their own rules: see [modes.md](modes.md#tag), [modes.md](modes.md#infected), [modes.md](modes.md#zombies) and [modes.md](modes.md#hide-and-seek). Chat, spectating, lobbies and solo mode apply to every mode.
 
 ## Runs and timer
 
@@ -65,7 +65,8 @@ On surf and bhop maps (race modes only, never tag), a see-through ghost of the f
 
 - `Y` opens chat, `Enter` sends, `Esc` cancels. Max 128 chars.
 - Messages starting with `!` are commands and are not broadcast.
-- System messages (joins, records, votes) in a distinct colour.
+- Chat stays in the lobby: only players on the same map read it ([Lobbies](#lobbies)).
+- System messages (joins, records, lobby moves) in a distinct colour.
 
 Chat commands:
 
@@ -73,7 +74,7 @@ Chat commands:
 | --- | --- |
 | `!r`, `!restart` | Back to start, reset timer |
 | `!back` | Back to current stage or checkpoint |
-| `!rtv` | Request a map vote (RTV request); on an open request: vote yes |
+| `!map [name]` (`!join`) | Who plays where (no name), or move to the lobby of the map whose title or id matches |
 | `!top` | Top-10 for this map |
 | `!pb` | Your PB and rank |
 | `!spec [name]` | Spectate (a player, or the next one) |
@@ -82,7 +83,7 @@ Chat commands:
 
 ## Tab scoreboard
 
-Hold `Tab`. Every mode shows its own columns ([modes.md](modes.md#score-display)) and then **Coins** and **Total playtime** ([Points and playtime](#points-and-playtime)). Your own row is highlighted. Header shows map name, mode, time left and player count (`12 / 32`). At the bottom of the screen: the five richest accounts of the server, online (green dot) or not, with their coins; your own is highlighted.
+Hold `Tab`. Every mode shows its own columns ([modes.md](modes.md#score-display)) and then **Coins** and **Total playtime** ([Points and playtime](#points-and-playtime)). Your own row is highlighted. Header shows map name, mode and the players in this lobby (`12 / 32`; 32 is the whole server). At the bottom of the screen: the five richest accounts of the server, online (green dot) or not, with their coins; your own is highlighted.
 
 Race columns: name, map rank, PB, status (`Start zone`, `Stage 3`, `Running`, `Spectating`), ping. Sorted by PB, players without a PB last. On tag maps the columns are name (with an `IT` marker), time not IT, status (`IT`, `Runner`, `Spectating`) and ping, sorted by score. On hide and seek maps they are name, role (`Hider`, `Seeker`, `Spectating`), finds, survived (mm:ss as a hider this round) and ping, sorted by survived time, then finds.
 
@@ -93,31 +94,23 @@ Race columns: name, map rank, PB, status (`Start zone`, `Stage 3`, `Running`, `S
 - `Mouse1` / `Mouse2` cycle targets. `Space` toggles free-fly camera.
 - Spectators have no timer and are counted separately on the scoreboard.
 
-## Map rotation and voting
+## Lobbies
 
-- Each map runs for 45:00.
-- At 0:30 left, a 20-second vote opens for everyone.
-- Options: up to 8 maps (`MAX_VOTE_MAPS`), picked at random from the enabled maps other than the current one: 2 surf and 1 each of bhop, tag, Zombie Run, Infected, Hide and seek and Zombie Defense (`VOTE_MAP_SLOTS`). A category with too few maps leaves free slots, filled with random maps of the other categories, so there are still 8 distinct maps (fewer only when fewer maps are enabled). They are listed by category in that order, each labelled with it ("Surf · Kessler", "Zombie Run · …"), in the panel and in the chat lines. The timed vote adds "Extend 10 min" as the last option (option 9 with 8 maps). Keys `1`–`8` (`MAP_VOTE_KEYS` in the web client's `vote.ts`) vote while the vote is open, instead of their binds (no weapon switch); changing a vote is allowed until it closes.
-- Most votes wins. Ties are broken at random. No votes at all: a random map from the options.
-- "Extend" adds 10:00 to the current map. At most 2 extends per map; after that, the option is not offered.
-- **RTV request** (rock the vote): `!rtv` (or console `rtv`), or picking a map in Esc › Change map while others are online, asks everyone "<name> wants to vote for a new map (<map>)" in a modal at the top of the screen ([ui.md](ui.md#rtv-request)). It is open for 20 s. The initiator votes yes; every other non-spectating player presses `1` = yes or `2` = no (changing the answer is allowed). Spectators see it but cannot vote or start one.
-  - It passes as soon as the yes votes reach a third of the non-spectating players, rounded up (1–3 players need 1, 4–6 need 2, 7–9 need 3, …; minimum 1). With 1–3 players the initiator's own yes is enough, so the vote opens at once. A passed request opens the map vote at once, without the extend option.
-  - It is declined when the 20 s run out, or as soon as the remaining players cannot reach the threshold any more (enough no votes). Players who leave or start spectating lose their vote and the threshold is recomputed.
-  - After a declined request nobody can start another for 60 s ("Map vote declined — try again in 45 s"). A passed request has no cooldown.
-  - One request at a time; `!rtv` during an open request is a yes vote. No request in the first 20 s of a map, while a map vote is open, or during the change countdown. The scheduled 0:30 vote cancels an open request (no cooldown).
-  - Nomination: a map picked from Change map is guaranteed a slot in the vote if the request passes (it replaces a random slot of its own category). The current map and admin-disabled maps cannot be nominated.
-  - Chat gets short system lines (request started, passed or declined); the modal is the main UI.
-- After a vote, a 5-second countdown, then everyone switches map. Running timers are cancelled.
-- Alone in the lobby (the only connected client, spectators included), you can switch map at once from the Esc menu (Change map) or with console `map <name>`: the same change as a vote win (any vote is cancelled, the 45:00 timer and extends reset). With anyone else connected, the same pick (or `map <name>`) starts an RTV request nominating that map instead.
-- Maps an admin disabled never come up in votes, `!rtv` or random picks, and normal players cannot pick them from Change map (shown greyed "Disabled by admin"). See [Admin](#admin).
+There is no map rotation, no map vote and no map timer. Every map is its own lobby, like a server of its own ([architecture.md](architecture.md#lobbies)):
+
+- **Server browser** (Esc › Servers, [ui.md](ui.md#server-browser)): every map of every mode, with the players in its lobby. Pick one to join whoever plays there; nobody else changes map. Console `map <id>` and chat `!map <name>` do the same.
+- **Your lobby** is all you see and hear: the other players, chat, the scoreboard, spectating, rounds, the coin multiplier. A Zombie Run round you start alone is joined by anyone who picks that map.
+- **Joining the game:** the page loads the map you played last (or `?map=<id>`) and, once online, joins that map's lobby. A map that is unknown or disabled sends you to the server's default map.
+- An empty lobby stops its round and starts fresh when someone comes. Race records and ghosts are per map as before.
+- Maps an admin disabled are greyed "Disabled by admin": only admins can join them; players already there stay. See [Admin](#admin).
+- `!rtv` answers that there are no map votes and points to the server browser.
 - Maps are generated from code in the client bundle, so a map change has no download.
 
 ## Solo (offline) mode
 
 - Same maps, timer, zones and splits as online.
-- The 45-minute rotation and vote run locally; only you vote.
-- Console `map <name>` or the Esc menu's Change map list changes map directly.
-- HUD shows "Offline — solo". When the server comes online, the client connects and joins the server's current map.
+- Console `map <name>`, `!map <name>` or the server browser load a map directly.
+- HUD shows "Offline — solo". When the server comes online, the client connects and joins the lobby of the map you are on.
 
 ## Accounts and identity
 
@@ -136,8 +129,8 @@ The leaderboard needs to know who set a time, so it only counts accounts. An acc
 
 Admin accounts (server config `ADMIN_USERNAMES`, unset by default; [architecture.md](architecture.md#admin-and-bans)) get an **Admin** entry in the Esc menu ([ui.md](ui.md#admin)). Being admin depends only on the logged-in account, never on the display name; a guest named "Tim" is not an admin.
 
-- **Maps:** enable or disable maps. Disabled maps leave the vote options, `!rtv` and the Change map list; the current map keeps running until it ends. At least one map stays enabled.
-- **Force change:** switch everyone to any map at once (disabled ones too); **Extend +10 min** adds time to the current map.
+- **Maps:** enable or disable maps. Only admins can join the lobby of a disabled map; players already in it stay. At least one map stays enabled.
+- **Players:** the list shows the map each player is on.
 - **Ban / unban:** ban a connected player (account, or guest by browser and IP) or an account by username. Banned players are disconnected with "You are banned" and cannot rejoin until unbanned. Point farming is banned automatically for 5 minutes ([economy.md](economy.md#abuse-and-collusion)). Admins cannot be banned.
 - **Coins:** add to, subtract from or reset the coin balance of any account, online or offline ([economy.md](economy.md#admin-changes)).
 - **Item:** give any cosmetic item to a connected account, or remove one it owns (also while worn; no refund).

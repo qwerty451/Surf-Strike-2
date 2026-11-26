@@ -81,7 +81,7 @@ describe('DefenseMode', () => {
 		s.mode.frame(s.now + 20);
 		expect(lastView(s).phase).toBe('wave');
 	});
-	it('number keys swap to owned weapons only and tell the server; a map vote takes them', () => {
+	it('number keys swap to owned weapons only and tell the server', () => {
 		const s = setup();
 		s.state({ players: [player(7, { weapons: ['pistol', 'smg', 'lmg'] })] });
 		expect(s.mode.slot(2, s.now)).toBe(true);
@@ -90,8 +90,6 @@ describe('DefenseMode', () => {
 		expect(s.sent().filter((m) => (m as { type: string }).type === 'zd')).toHaveLength(1);
 		s.mode.frame(s.now);
 		expect(lastView(s).weapon).toBe('smg');
-		s.host.voteOpen = true;
-		expect(s.mode.slot(1, s.now)).toBe(false);
 	});
 	it('a bought weapon arrives with its ammo and is held at once', () => {
 		const s = setup();

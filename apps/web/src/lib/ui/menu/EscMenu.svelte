@@ -14,7 +14,7 @@
 
 	/**
 	 * Esc menu (docs/ui.md#esc-menu): main entries on the left, the open
-	 * submenu (Change map, Settings, Shop, Inventory, Coins, Casino, Account) beside them. Esc goes back one
+	 * submenu (Servers, Settings, Shop, Inventory, Coins, Casino, Account) beside them. Esc goes back one
 	 * level, then resumes.
 	 */
 	let {
@@ -22,11 +22,8 @@
 		api,
 		maps = [],
 		mapId = '',
-		canChangeMap = false,
-		spectating = false,
-		voteOpen = false,
-		requestOpen = false,
-		rtvCooldown = null,
+		lobbies = null,
+		playerCount = 1,
 		account = null,
 		online = false,
 		coins = null,
@@ -43,12 +40,10 @@
 		api: GameApi;
 		maps?: MapListEntry[];
 		mapId?: string;
-		canChangeMap?: boolean;
-		/** Change map with others online: RTV request state (MapMenu). */
-		spectating?: boolean;
-		voteOpen?: boolean;
-		requestOpen?: boolean;
-		rtvCooldown?: { until: number; reason: 'declined' | 'mapStart' } | null;
+		/** Players per map lobby (server browser); null offline. */
+		lobbies?: Readonly<Record<string, number>> | null;
+		/** Players in this lobby, me included. */
+		playerCount?: number;
 		account?: { username: string; admin?: boolean } | null;
 		online?: boolean;
 		/** Coins submenu (null: guest, offline or a server without coins). */
@@ -92,7 +87,7 @@
 	// "Admin" only for admin accounts (the server decides; it re-checks every request).
 	const entries: Entry[] = $derived([
 		{ id: 'resume', label: 'Resume' },
-		{ id: 'maps', label: 'Change map' },
+		{ id: 'maps', label: 'Servers' },
 		{ id: 'settings', label: 'Settings' },
 		{ id: 'shop', label: 'Shop' },
 		{ id: 'inventory', label: 'Inventory' },
@@ -182,7 +177,7 @@
 		<div class="brand">
 			<span class="logo">Surf Strike 2</span>
 			{#if current}
-				<span class="map ss-label">{mapTitle(current)} · {modeLabel(current.kind)}</span>
+				<span class="map ss-label">{mapTitle(current)} · {modeLabel(current.kind)}{#if online}{` · ${playerCount} ${playerCount === 1 ? 'player' : 'players'}`}{/if}</span>
 			{/if}
 		</div>
 
@@ -235,17 +230,7 @@
 			{#if view === 'settings'}
 				<SettingsMenu {cvars} {api} {fullscreenSupported} bind:section />
 			{:else if view === 'maps'}
-				<MapMenu
-					{maps}
-					{mapId}
-					{canChangeMap}
-					{spectating}
-					{voteOpen}
-					{requestOpen}
-					{rtvCooldown}
-					admin={account?.admin === true}
-					onpick={pickMap}
-				/>
+				<MapMenu {maps} {mapId} {online} {lobbies} admin={account?.admin === true} onpick={pickMap} />
 			{:else if view === 'shop'}
 				<ShopMenu {api} {shop} balance={coins?.balance ?? 0} loggedIn={account !== null} {online} oninventory={(item) => go('inventory', item)} />
 			{:else if view === 'inventory'}

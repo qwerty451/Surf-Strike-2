@@ -17,7 +17,11 @@ import type { WeaponId } from './modes/zombies/weapons.ts';
 import type { Vec3 } from './types.ts';
 import { TICK_RATE } from './units.ts';
 
-export const PROTOCOL_VERSION = 3;
+/**
+ * 3: netcode v3 (quantized snapshots with server time, spawn handshake).
+ * 4: one lobby per map (docs/architecture.md#lobbies); no map rotation, vote or RTV.
+ */
+export const PROTOCOL_VERSION = 4;
 export const CLOSE_PROTOCOL_MISMATCH = 4006;
 /** WebSocket subprotocol that sends a database identity before hello. */
 export const SERVER_ID_PROTOCOL = 'surf-server-identity';
@@ -80,8 +84,6 @@ export function teleportSeq(flags: number): number {
 export function withTeleportSeq(flags: number, seq: number): number {
 	return (flags & ~FLAG_TELEPORT_SEQ_MASK) | ((seq & 0xff) << FLAG_TELEPORT_SEQ_SHIFT);
 }
-
-export type VoteOption = { kind: 'map'; mapId: string } | { kind: 'extend' };
 
 export interface PlayerInfo {
 	id: number;
@@ -207,6 +209,8 @@ export type ClientMessage =
 			version: number;
 			/** Session token from an earlier `auth` reply: auto-login. */
 			token?: string;
+			/** Map whose lobby to join (docs/architecture.md#lobbies); unknown or disabled: the server's default map. */
+			map?: string;
 	  }
 	/** Accounts (docs/gameplay.md#accounts-and-identity): work on the open socket, answered with `auth`. */
 	| { type: 'register'; username: string; password: string }
@@ -214,14 +218,8 @@ export type ClientMessage =
 	| { type: 'logout' }
 	| { type: 'zone'; kind: 'start' | 'stage' | 'checkpoint' | 'end'; index: number; tick: number }
 	| { type: 'chat'; text: string }
-	| { type: 'vote'; option: number } // 1-based option index
-	/** Same as `rtvRequest` without a nomination (`!rtv`). */
-	| { type: 'rtv' }
-	/** Start an RTV request (docs/gameplay.md#map-rotation-and-voting), optionally nominating a map; on an open request: a yes vote. */
-	| { type: 'rtvRequest'; mapId?: string }
-	/** Answer the open RTV request (keys 1 = yes, 2 = no). */
-	| { type: 'rtvVote'; yes: boolean }
-	| { type: 'changeMap'; mapId: string } // lone player only (docs/gameplay.md)
+	/** Move to the lobby of another map (docs/architecture.md#lobbies); answered with `mapChange`, or a system chat line when refused. */
+	| { type: 'changeMap'; mapId: string }
 	| { type: 'spectate'; targetId: number | null } // null = leave spectate
 	| { type: 'name'; name: string }
 	| { type: 'ping'; t: number }
@@ -283,10 +281,6 @@ export type AdminAction =
 	/** Ban a connected player (`targetId` = lobby id) or an account by username (offline ban). */
 	| { action: 'ban'; targetId?: number; username?: string; reason?: string }
 	| { action: 'unban'; banId: number }
-	/** Change to any map at once (disabled ones too). */
-	| { action: 'forceMap'; mapId: string }
-	/** Add ADMIN_EXTEND seconds to the current map. */
-	| { action: 'extend' }
 	/** Change an account's coin balance (docs/economy.md#admin-changes); `amount` is whole coins, not used by `reset`. */
 	| { action: 'coins'; username: string; op: 'add' | 'subtract' | 'reset'; amount?: number }
 	/** Give a cosmetic item to a connected account (`targetId` = lobby id). */
@@ -296,8 +290,6 @@ export type AdminAction =
 	/** Just ask for a fresh `adminState`. */
 	| { action: 'listBans' };
 
-/** Seconds the admin "extend" button adds. */
-export const ADMIN_EXTEND = 10 * 60;
 /** Most coins one admin `coins` action adds or takes. */
 export const ADMIN_COINS_MAX = 100_000;
 /** Max length of a ban reason. */
@@ -345,6 +337,8 @@ export interface AdminPlayerInfo {
 	guest: boolean;
 	/** Admins cannot be banned. */
 	admin: boolean;
+	/** Map whose lobby the player is in (absent on older servers). */
+	map?: string;
 	/** Balance of the account in tenths (absent for guests and on older servers). */
 	coins?: number;
 	/** Item ids the account owns (absent for guests and on older servers). */
@@ -387,7 +381,7 @@ export type ServerMessage =
 			map: string;
 			/** Gamemode of `map` (optional for old servers: derive from the map). */
 			mode?: GameModeId;
-			mapTimeLeft: number; // seconds
+			/** Players in this map's lobby (docs/architecture.md#lobbies), self included. */
 			players: PlayerInfo[];
 			cvars: Partial<Cvars>;
 			records: MapRecordInfo;
@@ -427,35 +421,14 @@ export type ServerMessage =
 	 * this player's records on `map` (own PB/rank, map record) right now.
 	 */
 	| { type: 'records'; map: string; records: MapRecordInfo }
-	| { type: 'voteStart'; options: VoteOption[]; duration: number; rtv: boolean }
-	| { type: 'voteUpdate'; counts: number[] }
-	| { type: 'voteEnd'; winner: VoteOption; countdown: number }
-	/**
-	 * RTV request opened (`started`) or its counts changed; also sent on join
-	 * while one is open. `duration`: seconds left. Passes at `yes >= needed`.
-	 */
-	| {
-			type: 'rtvRequest';
-			started: boolean;
-			initiatorId: number;
-			initiator: string;
-			mapId: string | null;
-			duration: number;
-			yes: number;
-			no: number;
-			needed: number;
-	  }
-	/** RTV request closed; when passed a `voteStart` follows. `cooldown`: seconds until the next request (declines). */
-	| { type: 'rtvRequestEnd'; passed: boolean; reason: 'passed' | 'timeout' | 'rejected' | 'cancelled'; cooldown: number }
-	/** No RTV request for `seconds` (map-start block or decline cooldown); sent on join and map change while it applies. */
-	| { type: 'rtvCooldown'; seconds: number; reason: 'declined' | 'mapStart' }
 	| {
 			type: 'mapChange';
 			map: string;
 			mode?: GameModeId;
-			mapTimeLeft: number;
 			cvars: Partial<Cvars>;
 			records: MapRecordInfo;
+			/** Players in the new map's lobby, self included: the client replaces its remote players. */
+			players: PlayerInfo[];
 	  }
 	| ({ type: 'modeState' } & ModeState)
 	| { type: 'tagged'; by: number; target: number }
@@ -469,7 +442,6 @@ export type ServerMessage =
 	| { type: 'zd'; ev: ZdEvent; spawnSeq?: number }
 	/** Tournament event (spawn, duel and round flow, hits, kills, tracers, ammo, bets, champion). */
 	| { type: 'trn'; ev: TrnEvent; spawnSeq?: number }
-	| { type: 'timeLeft'; mapTimeLeft: number }
 	/** `richest`: the accounts with the most coins, richest first, online or not (absent on older servers). */
 	| { type: 'scoreboard'; rows: ScoreRow[]; richest?: RichEntry[] }
 	| { type: 'ping'; t: number }
@@ -483,8 +455,13 @@ export type ServerMessage =
 	 */
 	| { type: 'auth'; ok: true; username: string | null; token?: string; records?: MapRecordInfo; admin?: boolean }
 	| { type: 'auth'; ok: false; error: string }
-	/** Maps players may pick (votes, Change map): sent after `welcome` and to everyone on every change. */
+	/** Maps players may join (server browser): sent after `welcome` and to everyone on every change. */
 	| { type: 'maps'; enabled: string[] }
+	/**
+	 * Players per map lobby (docs/architecture.md#lobbies), spectators included;
+	 * maps nobody plays are left out. After `welcome` and to everyone when a count changes (at most once a second).
+	 */
+	| { type: 'lobbies'; counts: Record<string, number> }
 	/** Admins only: reply to an `admin` request, and pushed when players or bans change. */
 	| ({ type: 'adminState' } & AdminState)
 	| { type: 'adminResult'; ok: boolean; error?: string; message?: string }

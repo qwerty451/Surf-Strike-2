@@ -7,12 +7,8 @@ export const KILL_FEED_MS = 6000;
 /** A semi-auto click is remembered this long if the weapon is not ready yet. */
 export const FIRE_BUFFER_MS = 150;
 
-/**
- * Keys 1-4: vote while a map vote is open, else pick a weapon while the
- * loadout window is open (null = nothing to do).
- */
-export function slotAction(slot: number, voteOpen: boolean, loadoutOpen: boolean): { kind: 'vote' } | { kind: 'weapon'; weapon: WeaponId } | null {
-	if (voteOpen) return { kind: 'vote' };
+/** Keys 1-4: pick a weapon while the loadout window is open (null = nothing to do). */
+export function slotAction(slot: number, loadoutOpen: boolean): { kind: 'weapon'; weapon: WeaponId } | null {
 	const w = weaponForSlot(slot);
 	return w && loadoutOpen ? { kind: 'weapon', weapon: w } : null;
 }

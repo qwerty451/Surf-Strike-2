@@ -146,14 +146,10 @@ describe('ZombiesMode', () => {
 		expect(MAP.spawns ?? [MAP.spawn]).toContain(vi.mocked(s.host.teleport).mock.calls[0]![0]);
 	});
 
-	it('number keys pick a weapon, or go to an open map vote', () => {
+	it('number keys pick a weapon', () => {
 		const s = setup();
 		s.state({ phase: 'countdown' });
 		const lmg = WEAPONS.lmg.slot;
-		s.host.voteOpen = true;
-		expect(s.mode.slot(lmg, s.now)).toBe(false);
-		expect(s.host.send).not.toHaveBeenCalled();
-		s.host.voteOpen = false;
 		expect(s.mode.slot(lmg, s.now)).toBe(true);
 		expect(s.host.send).toHaveBeenCalledWith({ type: 'loadout', weapon: 'lmg' });
 	});

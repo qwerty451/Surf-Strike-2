@@ -51,7 +51,6 @@ export function fakeHost(map: MapDef, view: 'zombies' | 'infected' | 'defense' |
 		online: true,
 		selfId: 7,
 		viewId: 7,
-		voteOpen: false,
 		cvar: (n) => cvars[n]!,
 		myName: () => 'Me',
 		name: (id) => `P${id}`

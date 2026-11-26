@@ -30,7 +30,7 @@ Surf Strike 2 supports two deployment modes:
 | --- | --- | --- | --- |
 | Client | Vercel (static) | SvelteKit, Three.js, TypeScript | Rendering, movement simulation, HUD, console, solo fallback |
 | Discovery API | Vercel function | SvelteKit `+server.ts`, Vercel Runtime Cache | `POST /api/server` stores the tunnel URL (needs `HOST_SECRET`); `GET` returns it |
-| Game server | Host PC | Node 22+, `ws`, `better-sqlite3` | Lobby state, relay, run validation, map timer and vote, leaderboards |
+| Game server | Host PC | Node 22+, `ws`, `better-sqlite3` | One lobby per map, relay, run validation, leaderboards |
 | Tunnel | Host PC | `cloudflared` quick tunnel | Public HTTPS/WSS URL with no port forwarding |
 | Database | Host PC | SQLite file | Accounts and sessions, guest players, personal bests, top-10 per map |
 
@@ -52,6 +52,7 @@ Before starting, `./start.sh` and `pnpm host` also check `FIXED_SERVER_URL` (if 
 2. Check `?server=<url>`. If set, connect directly to that WebSocket URL.
 3. In a self-hosted build (`SURF_ADAPTER=node`), connect directly to `wss://<host>/ws` (or `ws://` on HTTP) on the same origin without calling `/api/server`.
 4. Otherwise (`adapter-vercel`), `GET /api/server`. If `url` is null or `lastSeen` is older than 3 minutes, stay solo and show "Offline — solo" in the HUD. If present, open `wss://<tunnel>/ws`.
+   The `hello` names the map the client is on; the server puts it in that map's lobby ([Lobbies](#lobbies)).
 5. Enter online mode after a `welcome` with the same protocol version. On a mismatch, show a reload notice and wait 60 s before trying again.
 6. On disconnect, fall back to solo on the same map. The usual retry interval is 10 s.
 
@@ -72,7 +73,7 @@ Each client simulates its own movement at 64 Hz with zero input lag. The server 
 - **Wire protocol (`PROTOCOL_VERSION = 3`, `packages/shared/src/protocol.ts`):**
   - **Client to server (`BIN_STATE`, 47 or 55 B at 64 Hz):** float32 position, velocity and angles, tick, status, stage, run time, flags, an 8-bit teleport generation and a 16-bit spawn sequence. Combat clients append the last rendered server timestamp as a float64 once synchronized.
   - **Server to clients (`BIN_SNAPSHOT` v3, default 32 Hz).** The 13-byte header carries the frame kind, flags, player count, wrapping 16-bit sequence and float64 monotonic `serverTimeMs`. Each 31-byte player entry carries the sender tick, quantized pose, movement flags, teleport counter, status, idle flag and signed 24-bit sample time offset in 1/8 ms units. Race entries add 4 bytes for stage and run ticks. At 32 players the payload is 1,005 B for combat or 1,133 B for race, within the 1,150 B QUIC datagram budget.
-  - **JSON reliable events:** chat, zone hits, run finished, votes, map change, join/leave, shop/casino, mode events, and clock pings.
+  - **JSON reliable events:** chat, zone hits, run finished, lobby change, join/leave, shop/casino, mode events, and clock pings. Every message about players goes to their lobby only; each lobby gets a snapshot of its own players (one sequence number per tick, shared by all lobbies, so it keeps rising when a client changes lobby).
 - **Server time base and tick de-aliasing (`apps/web/src/lib/net/clock.ts`, `interp.ts`):**
   - The client seeds `ServerClock` from `welcome.serverTime`, pings the server every 1 s (`ping` → `pong { t, serverTime }`), and updates a 64-sample min-filtered offset (`localMs - serverTimeMs`) on every snapshot and pong. Downlink jitter spikes and TCP stalls cannot pull the clock backward; sustained route shifts slew smoothly and large clock shifts require four fresh pongs. The requested render timestamp never moves backward. Duplicate or out-of-order snapshot `seq` numbers are dropped.
   - The server assigns each remote pose a sample time using the sender's 64 Hz tick spacing around a sliding-median anchor. The browser's `SnapshotBuffer` and Zombie Run rewind use the timestamp carried by the snapshot. Within the offset's 17-minute range, repeated relays retain the pose's timestamp, so a late joiner and a client that missed a snapshot agree on the timestamps they share.
@@ -80,9 +81,9 @@ Each client simulates its own movement at 64 Hz with zero input lag. The server 
   - `AdaptiveDelay` starts at two snapshot periods (62.5 ms at 32 Hz, 50 ms at 64 Hz) and stays within 50–200 ms. It tracks the peak snapshot age in each 500 ms bucket over six seconds. The second-highest bucket can raise the sustained delay up to 62.5 ms when the snapshot rate leaves room above the starting delay, with 16 ms of margin and 50 ms covered by extrapolation. Playback slows when a gap outlasts the expected arrival by 12 ms, up to a gap of 500 ms. After three consecutive late gaps within the extrapolation budget, playback allows the recurring gap before slowing. The delay rises by at most 450 ms/s and falls by up to 120 ms/s.
   - When a stall outruns the buffer, `SnapshotBuffer` predicts along the last velocity for up to 90 ms or 80 u of travel, whichever comes first. A sharp velocity change caps prediction at 25 ms. On hull contact the prediction can follow the contact plane for up to 24 ms. Race and Tag blend prediction corrections over 80 ms. Combat modes draw the corrected position immediately. A sender whose tick stalls holds the last confirmed pose.
   - Teleports snap on the first frame at or after the teleport sample time. A change of teleport generation, a new `FLAG_TELEPORTED` bit, or a jump over 1,024 u clears any correction in progress.
-- **Combat rewind:** Infected, Hide and Seek, and Zombie Run send the server timestamp from the last rendered frame with attacks. Each remote player holds at its own prediction limit. Zombie Run's AI and the other avatars keep sampling the shared render clock. The rewind request uses the oldest active held pose when a hold occurs, bounded by the history and RTT budget at estimated receipt time. See [Render timestamps for lag compensation](#render-timestamps-for-lag-compensation).
+- **Combat rewind:** Infected, Hide and Seek, Tournament, and Zombie Run send the server timestamp from the last rendered frame with attacks. Each remote player holds at its own prediction limit. Zombie Run's AI and the other avatars keep sampling the shared render clock. The rewind request uses the oldest active held pose when a hold occurs, bounded by the history and RTT budget at estimated receipt time. See [Render timestamps for lag compensation](#render-timestamps-for-lag-compensation).
 - **Server loop and transport seam (`apps/server/src/scheduler.ts`, `transport.ts`, `apps/web/src/lib/net/transport.ts`):**
-  - One drift-free absolute-deadline `TickScheduler` replaces the old `setInterval` timers (no 31.25 → 31 ms truncation drift), runs `tickMode()` immediately before `sendSnapshot()` on shared ticks, recovers from event-loop stalls without burst-sending, and drives slower tasks (rotation, scoreboard, pings, playtime flush). Setting `SNAPSHOT_HZ=64` in the server env enables 64 Hz snapshots (mode ticks stay at 32 Hz; `welcome.snapshotHz` tells clients the active rate). Default remains `32`.
+  - One drift-free absolute-deadline `TickScheduler` replaces the old `setInterval` timers (no 31.25 → 31 ms truncation drift), runs `tickMode()` immediately before `sendSnapshot()` on shared ticks, recovers from event-loop stalls without burst-sending, and drives slower tasks (lobby counts, scoreboard, pings, playtime flush). Setting `SNAPSHOT_HZ=64` in the server env enables 64 Hz snapshots (mode ticks stay at 32 Hz; `welcome.snapshotHz` tells clients the active rate). Default remains `32`.
   - Both `Lobby` (`ClientTransport`) and `NetClient` (`NetTransport`) sit behind small reliable/unreliable transport interfaces so a future datagram transport can plug in without changing framing or lobby logic. On WebSocket, droppable frames (`BIN_SNAPSHOT`, `BIN_ZOMBIES`) are skipped once `bufferedAmount` exceeds `max(2048 B, 3 × frameSize)` instead of queuing up to 1 MiB of stale state.
   - Record ghost compression (`apps/server/src/modes/race.ts`) skips non-record runs and runs `zlib.deflateRaw` (level 6) off the event loop on the libuv worker pool. Mode broadcasts with an excluded sender (`shot`, `reload`, `swing`) stringify the JSON payload once via `broadcast(msg, exceptId)`.
 - **Diagnostics and benchmarking:**
@@ -114,10 +115,11 @@ Protocol v3 carries one rewind timestamp per attack. When targets are drawn at d
 | Direction | Message | Encoding |
 | --- | --- | --- |
 | S→C | `serverIdentity { serverId }` immediately after the upgrade. Clients that negotiate `surf-server-identity` wait for this frame before sending hello. | JSON |
-| C→S | `hello { playerId, name, version, token? }` (`token`: stored session, auto-login; `version = 3`) | JSON |
-| S→C | `welcome { version, serverId, selfId, map, mode, mapTimeLeft, players[], cvars, records, account, serverTime?, snapshotHz? }` (`account`: `{ username, admin }` or `null` for guests; `serverTime` seeds client clock sync; `snapshotHz` reports the active snapshot rate) | JSON |
+| C→S | `hello { playerId, name, version, token?, map? }` (`token`: stored session, auto-login; `map`: the lobby to join, else the default map; `version = 4`) | JSON |
+| S→C | `welcome { version, serverId, selfId, map, mode, players[], cvars, records, account, serverTime?, snapshotHz? }` (`players`: that map's lobby; `account`: `{ username, admin }` or `null` for guests; `serverTime` seeds client clock sync; `snapshotHz` reports the active snapshot rate) | JSON |
 | C→S / S→C | `ping { t }` / `pong { t, serverTime }` (1 Hz client clock sync) | JSON |
-| S→C | `maps { enabled[] }`: maps players may pick (votes, Change map); right after `welcome` and to everyone on every change | JSON |
+| S→C | `maps { enabled[] }`: maps players may join (server browser); right after `welcome` and to everyone on every change | JSON |
+| S→C | `lobbies { counts }`: players per map lobby (`{ mapId: n }`, spectators included, empty lobbies left out); right after `welcome` and to everyone when a count changes, at most once a second | JSON |
 | C→S | `register { username, password }`, `login { username, password }`, `logout {}` (any time after `welcome`, on the open socket) | JSON |
 | S→C | `auth { ok: true, username, token?, records?, admin? }` / `auth { ok: false, error }` (`username: null` = logged out; also sent with `ok: false` after a `welcome` whose hello token was rejected) | JSON |
 | C→S | `BIN_STATE` (type 1, 47 B base, with an optional 8 B combat render timestamp) | binary, 64 Hz |
@@ -130,7 +132,7 @@ Protocol v3 carries one rewind timestamp per attack. When targets are drawn at d
 | S→C | `records` inside `welcome`, `mapChange`, `runResult`, `auth` and `records`: `{ pbTicks, pbSplits, rank, recordTicks, recordName, top? }`; `top` = first 10 times `{ rank, name, ticks, self? }` on race maps, absent on older servers and in other modes | JSON |
 | S→C | `records { map, records }`: pushed to every other player on the map when a run sets a new PB (their rank and the map record may have changed) | JSON |
 | C↔S | `chat { text }` / `chat { from, text, admin? }` (`admin`: server-set marker for admin senders; scoreboard rows carry the same flag) | JSON |
-| C→S | `admin { action }`: `setMapEnabled { mapId, enabled }`, `ban { targetId? \| username?, reason? }`, `unban { banId }`, `coins { username, op: add\|subtract\|reset, amount? }` (whole coins), `giveItem { targetId, item }`, `takeItem { targetId, item }`, `forceMap { mapId }`, `extend`, `listBans`. Re-checked on the server; non-admins get `adminResult { ok: false }` and nothing happens | JSON |
+| C→S | `admin { action }`: `setMapEnabled { mapId, enabled }`, `ban { targetId? \| username?, reason? }`, `unban { banId }`, `coins { username, op: add\|subtract\|reset, amount? }` (whole coins), `giveItem { targetId, item }`, `takeItem { targetId, item }`, `listBans`. Re-checked on the server; non-admins get `adminResult { ok: false }` and nothing happens | JSON |
 | S→C | `adminResult { ok, error?, message? }` (every `admin` request) and, to admins only, `adminState { maps[{ id, title, kind, enabled }], bans[{ id, username, kind, reason, createdAt, createdBy, secondsLeft? }], abuse[]?, players[{ id, name, account?, guest, admin, coins? }] }` (after each request and when players or bans change) | JSON |
 | S→C | `banned { reason, seconds? }`, then close 4009 | JSON |
 | C→S | Shop: `shopBuy { item }`, `shopEquip { slot, item }` ([economy.md](economy.md#shop)) | JSON |
@@ -138,10 +140,8 @@ Protocol v3 carries one rewind timestamp per attack. When targets are drawn at d
 | C→S | Casino: `casinoBet { game, bet, … }`, `crashCashout` ([economy.md](economy.md#casino)) | JSON |
 | S→C | Casino: `casino`, `crashStart`, `casinoResult`, `casinoNews` ([economy.md](economy.md#casino)) | JSON |
 | S→C | Coins: `coins`, `award`, `multiplier`, `coinsNotice` ([economy.md](economy.md#wire)) | JSON |
-| C→S | `vote { option }` (1-based, up to 9), `rtv` (= `rtvRequest` without a map), `spectate { targetId }` | JSON |
-| C→S | `rtvRequest { mapId? }`: start an RTV request, optionally nominating a map (on an open request: a yes vote); `rtvVote { yes }`: answer it. Errors come back as system chat | JSON |
-| S→C | `voteStart { options, duration, rtv }` (up to 6 maps by category, then `extend`), `voteUpdate`, `voteEnd`, `mapChange { map, mode, ... }` | JSON |
-| S→C | `rtvRequest { started, initiatorId, initiator, mapId, duration, yes, no, needed }` (start, every count or threshold change, and on join while open; `duration` = seconds left), `rtvRequestEnd { passed, reason: passed\|timeout\|rejected\|cancelled, cooldown }`, `rtvCooldown { seconds, reason: declined\|mapStart }` (on join and map change while requests are blocked) | JSON |
+| C→S | `changeMap { mapId }`: move to that map's lobby; answered with `mapChange`, or a system chat line (unknown, disabled, already there). `spectate { targetId }` (a player of the same lobby) | JSON |
+| S→C | `mapChange { map, mode, cvars, records, players[] }`: to the player who moved; `players` are the new lobby's (the client replaces its remote players). The old lobby gets `leave`, the new one `join` |
 | S→C | `modeState { mode: 'tag', phase, round, timeLeft, it[], immune[], scores[] }` (non-race modes, on change + every 1 s), `tagged { by, target }` ([modes.md](modes.md)) | JSON |
 | C→S | `getGhost { map }` (race maps, after `welcome`/`mapChange`) | JSON |
 | C→S | Hide and seek: `knife { origin, dir }` (seeker swing; validated and lag-compensated against the hiders' position history, [modes.md](modes.md#hide-and-seek)) | JSON |
@@ -155,6 +155,18 @@ Protocol v3 carries one rewind timestamp per attack. When targets are drawn at d
 | S→C | `BIN_DEFENSE` (type 5): `u8 5, u8 version, u32 sim tick, u8 zombie count, u8 turret count`, 12 bytes per zombie (id, position ·2 as i16, yaw, flags, hp, kind), 6 bytes per built turret (pad, yaw, pitch, flags, target id); 32 Hz on Zombie Defense maps during a wave, droppable under backlog | binary |
 | S→C | `BIN_ZOMBIES` (type 4): `u8 4, u8 version, u32 sim tick, u8 count`, 11 bytes per zombie (id, position ·2 as i16, yaw, flags, hp); 32 Hz on Zombie Run maps, droppable under backlog | binary |
 | S→C | `BIN_GHOST` (type 3): `u8 3, u8 version, u8 flags (bit 0 = has ghost), u8 mapLen, map, u8 nameLen, name, u32 ticks, u32 samples`, then the deflate-raw track. Reply to `getGhost` ("none" when there is no ghost or `map` is not the current map), and pushed to everyone on a new record ghost ([gameplay.md](gameplay.md#ghosts)) | binary |
+
+## Lobbies
+
+One server process, one lobby per map (`Room` in `apps/server/src/lobby.ts`), so every map of every mode can be played at any time, like one server per map. There is no rotation, vote or map timer.
+
+- **What a room has.** Its map, its members, its `ServerMode` and its own `Economy` (activity, multiplier, round and session caps, abuse signals). The mode is created when the first player joins and disposed when the last one leaves, so an empty room costs nothing and starts fresh. The economy is kept, so caps and abuse strikes survive an empty room.
+- **Scoped to the room:** snapshots, `join`/`leave`/`rename`/`spectating`, chat and the mode's system lines, `scoreboard` rows, `multiplier`, every mode message and binary frame. Spectating needs a target in the same room.
+- **Server-wide:** connections and the player cap (`MAX_PLAYERS`, close 4003), accounts and sessions, playtime (`AccountStats`), bans and the admin menu, the shop, the casino and their news, the richest list, `maps` and `lobbies`. Coin changes that do not come from a map (shop, casino, admin, the register bonus) go through a separate `Economy` (the bank) that reaches every connection.
+- **Joining.** `hello.map` picks the room; unknown, or disabled for a non-admin: the default map (`initialMap`; `pnpm host` uses `DEFAULT_MAP_ID`, `surf_aurora`), or the first enabled one. `changeMap { mapId }` moves a client: it leaves the old room (`leave` and "<name> went to Surf · Ember." there), joins the new one and gets `mapChange` with its players. Nobody else changes map.
+- **`lobbies { counts }`** goes to everyone, at most once a second (`LOBBIES_MS`) and only when a count changed; also right after `welcome`. The client shows it in the server browser ([ui.md](ui.md#server-browser)). `/health` returns it as `lobbies`.
+- **Chat commands.** `!map` lists the busy lobbies, `!map <name>` moves to the best match (exact id or title first, then a substring). `!rtv` explains that there are no votes.
+- **Dev launcher** (`pnpm play`): the bots join the launch map's lobby and the browser URL carries `&map=<id>`, so you land with them; `POST /map?id=` moves the bots to another lobby.
 
 ## Accounts
 
@@ -200,7 +212,7 @@ A small admin menu (Esc menu › Admin, [ui.md](ui.md#admin)) for the host. Code
 
 - **Who is admin.** Only logged-in accounts whose username (case-insensitive, `username_lower`) is listed in `ADMIN_USERNAMES` in `apps/server/.env` (comma-separated, unset or empty = no admins). The server decides at hello-token login and at password login, and resets it on `logout`. Public registration reserves configured admin usernames. Display names never count: a guest can type any name, but guest names equal (ignoring case) to a registered username are refused (hello falls back to `Guest-xxxx`; `name` / `!name` get a system message). The client is told `account.admin` only to show the menu; every `admin` message is re-checked server-side and non-admins get an error.
 - **Rate limit and audit.** 30 admin actions per minute per connection. Every action is printed to the server console (`admin <name> (account <id>) <action> <target>`) and stored in `admin_log`; passwords, tokens and IPs are never logged.
-- **Maps.** Disabled maps (`map_settings`) are left out of vote options, RTV nominations, random picks (`MapRotation` takes a live `isEnabled` filter) and the lone-player Change map; at least one map always stays enabled. Disabling the current map does not end it. `forceMap` changes to any map (disabled ones too) at once for everyone, through `MapRotation.forceMap` and the normal `mapChange` broadcast; `extend` adds 10 minutes (not during a vote or pending change).
+- **Maps.** Only admins can join the lobby of a disabled map (`map_settings`), by `changeMap` or `hello`; a hello for one lands on the default map (or the first enabled one). Players already in it stay. At least one map always stays enabled. `adminState.players[].map` says which lobby each player is in.
 - **Bans.** Targets: a connected player (by lobby id) or an account by username (offline ban). An account ban stores the account id (plus the player key of a connected target): all of its connections are kicked (`banned`, close 4009), and hello-token auto-login and `login` are refused. A guest ban stores the player key and, when known, the client IP: hellos with that key or IP are refused unless the hello token logs in an admin account. Admin accounts cannot be banned (nor ban themselves). Unban deletes the row. Bans by the abuse detection ([economy.md](economy.md#abuse-and-collusion)) have `created_by = auto` and an `expires_at`: expired ones no longer count and are deleted later. An admin can still ban such an account permanently.
 - **Client IP.** Controlled by `TRUST_PROXY` ([hosting.md](hosting.md#trust_proxy)). Default `loopback` trusts `CF-Connecting-IP` and `X-Forwarded-For` only on loopback connections (local `cloudflared`). For Cloudflare-only trust, set `TRUST_PROXY=cf:<CIDRs>` with the IPs or CIDRs of the immediate cloudflared peers, such as `TRUST_PROXY=cf:10.42.0.0/16` for that pod range. Replace any bare `TRUST_PROXY=cf` before upgrading because it fails startup. For other reverse proxies, use explicit peer CIDRs or `TRUST_PROXY=private` on a trusted private network. Loopback and trusted proxy addresses are never stored.
 
@@ -208,7 +220,7 @@ A small admin menu (Esc menu › Admin, [ui.md](ui.md#admin)) for the host. Code
 | --- | --- |
 | `map_settings` | `map_id` (primary key), `enabled` (0/1; missing row = enabled) |
 | `bans` | `id`, `account_id` (nullable), `player_key` (nullable), `ip` (nullable), `username_snapshot`, `reason`, `created_at`, `created_by`, `expires_at` (null = permanent) |
-| `admin_log` | `id`, `created_at`, `admin_account_id`, `admin_username`, `action` (`enable-map`, `disable-map`, `force-map`, `extend`, `ban`, `unban`, `coins-add`, `coins-subtract`, `coins-reset`, `give-item`, `take-item`), `target`, `detail` |
+| `admin_log` | `id`, `created_at`, `admin_account_id`, `admin_username`, `action` (`enable-map`, `disable-map`, `ban`, `unban`, `coins-add`, `coins-subtract`, `coins-reset`, `give-item`, `take-item`), `target`, `detail` |
 
 ## Repo layout
 
@@ -223,4 +235,4 @@ packages/
 docs/          these documents
 ```
 
-`packages/shared` is used by both the client (simulation, rendering input) and the server (zone positions for validation, map list for votes).
+`packages/shared` is used by both the client (simulation, rendering input) and the server (zone positions for validation, the map list for the lobbies).

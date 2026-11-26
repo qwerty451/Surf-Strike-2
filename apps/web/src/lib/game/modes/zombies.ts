@@ -33,7 +33,6 @@ export class ZombiesMode implements ClientMode {
 			name: (id) => (host.online ? host.name(id) : host.myName()),
 			notice: (text) => host.notice(text),
 			teleport: (x, y, z, yaw) => host.teleport({ pos: { x, y, z }, yaw }),
-			voteOpen: () => host.voteOpen,
 			// Heard from the camera: the spectator camera while spectating (infected-listener.ts).
 			sound: (name, at) => host.audio.zombies(name, soundSource(at, host.spec, host.remotes), soundListener(host.spec, host.eye), host.yaw),
 			setZoom: (fov) => {

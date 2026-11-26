@@ -34,7 +34,6 @@ const inertApi: GameApi = {
 	closeChat: noop,
 	toggleConsole: noop,
 	closeSettings: noop,
-	vote: noop,
 	changeMap: noop,
 	minimizeBan: noop,
 	shopBuy: noop,
@@ -50,7 +49,6 @@ const inertApi: GameApi = {
 	createPreview: () => null,
 	modeUi: () => {},
 	itemPicture: () => Promise.resolve(null),
-	rtvVote: noop,
 	trnBet: noop,
 	admin: noop
 };

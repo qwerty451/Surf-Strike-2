@@ -10,11 +10,9 @@ The HUD is Svelte components layered over the Three.js canvas.
 | --- | --- |
 | Bottom centre | Speed (horizontal u/s, large), timer and current stage below it |
 | Bottom centre, above speed | Split popup on stage or checkpoint (`Stage 3 01:12.402 −0.213`) |
-| Top centre | Map name and time left (`surf_ember · 07:42`) |
-| Top right | Connection status (`Online · 12 / 32` or `Offline — solo`), FPS if `cl_showfps 1` |
+| Top centre | Map name and gamemode (`surf_ember · Surf`) |
+| Top right | Connection status (`Online · 12 / 32`: players in this map's lobby; or `Offline — solo`), FPS if `cl_showfps 1` |
 | Bottom left | Chat (fades after 8 s; full history while typing) |
-| Left middle | Vote panel (up to 9 options: 8 maps and Extend, "Surf · Kessler" … "Extend 10 min" with key numbers and live vote counts, countdown bar) |
-| Top centre, below map name | RTV request modal (see [RTV request](#rtv-request)) |
 | Top centre, below all of that | [Loot box news](#box-news) |
 | Top left | Award popups ([Award popups](#award-popups)), below the position readout |
 | Right middle | Score panel: map records, PB and gap, or the current standing ([Score panel](#score-panel)) |
@@ -36,11 +34,11 @@ Always on while playing (`ScorePanel.svelte`), driven by the gamemode's definiti
 - **Placement.** Vertically centred in the free strip on the right, below the connection status (and a full kill feed) and above the mode's health and weapon bars. `score-panel.ts` holds these areas and `fitPanel`, which decides how much fits: fewer rows in low windows, narrower without minor columns below 1000 px width, only your own row (and the race lines) below 820 px, hidden below 480 px or when there is no height left.
 - Hidden while the Tab scoreboard is open, and with `cl_scorepanel 0` (Settings › HUD › "Show score panel").
 
-Dev preview: `/?mockhud&novote&mode=<gamemode>&players=<n>&self=<position>`, `&old=1` for an older server, `&open=scoreboard` for the Tab scoreboard, `&coins=<n>` award popups (`0`: a guest), `&warn` a warning, `&ban=<seconds>` the ban screen.
+Dev preview: `/?mockhud&mode=<gamemode>&players=<n>&self=<position>`, `&old=1` for an older server, `&open=scoreboard` for the Tab scoreboard, `&coins=<n>` award popups (`0`: a guest), `&warn` a warning, `&ban=<seconds>` the ban screen.
 
 ## Award popups
 
-`AwardPopups.svelte`, pure helpers in `game/coins.ts`. Every award shows its amount, reason and multiplier (`+4.5 coins  Found a hider  ×1.5`) at the top left for 4.5 s, newest at the bottom, at most 5 (2 while a map vote is open, so they stay above its panel). Notices (guest hint, abuse warning) use the same stack for 10 s. They take no input, play no sound, and their width keeps clear of the banners at the top centre in every mode.
+`AwardPopups.svelte`, pure helpers in `game/coins.ts`. Every award shows its amount, reason and multiplier (`+4.5 coins  Found a hider  ×1.5`) at the top left for 4.5 s, newest at the bottom, at most 5. Notices (guest hint, abuse warning) use the same stack for 10 s. They take no input, play no sound, and their width keeps clear of the banners at the top centre in every mode.
 
 <a id="box-news"></a>
 
@@ -49,36 +47,24 @@ Dev preview: `/?mockhud&novote&mode=<gamemode>&players=<n>&self=<position>`, `&o
 `BoxNews.svelte`, pure queue in `game/box-news.ts`. When someone opens a [loot box](economy.md#loot-box), every player sees a card at the top centre once the opener has seen the result: picture, "Ana opened a loot box", item and rarity in its colour, and a small "New" or "Duplicate".
 
 - Common is small and short (4 s), uncommon a bit larger (5 s), rare glows (6 s), epic is the biggest with a pulsing glow (8 s). Cards slide in and out; with reduced motion nothing moves.
-- At most 3 at a time and only as many as fit between the HUD and the crosshair. The stack starts below everything marked `data-top-hud` (map name, spectator bar, round banners, RTV request). While others wait, cards stay shorter, further common ones are merged ("+2 more"), and what waited more than 10 s (rare, epic: 20 s) is dropped.
+- At most 3 at a time and only as many as fit between the HUD and the crosshair. The stack starts below everything marked `data-top-hud` (map name, spectator bar, round banners). While others wait, cards stay shorter, further common ones are merged ("+2 more"), and what waited more than 10 s (rare, epic: 20 s) is dropped.
 - It takes no input and stays visible above the Esc menu. It is hidden under the console and the ban screen. The opener does not get their own card while the loot box screen is open.
 - The picture comes from the pictures the shop keeps. Otherwise `itemPicture` (`render/character/preview.ts`) draws that one item in idle time on a small offscreen WebGL context. Creating it costs a long frame, so that happens while joining a server (`warmItemPictures`), and it stays until the game ends. The card shows at once, the picture when it is ready; without WebGL there is only the text.
 - **Casino wins** of 5× the bet and more use the same queue: multiplier, "Ana won big at Crash" and the payout. The card grows with the tier reached (5×, 10×, 20×, 50×, 100×; `CASINO_LOOK`: 50 to 120 px, 4 to 9 s), each in its own colour; from 20× it glows, from 50× it pulses. They are never merged. Everyone gets them, the winner too. Dev preview: `&casinonews` (`=<multiplier>`).
 - Sound: the zone bell, the record bell for rare and epic and wins from 20×, 8 to 10 dB below the opener's own.
 - `cl_boxnews 0` (Settings › HUD › "Show loot box and casino news") turns cards and sound off. The chat lines for rare and epic items and for wins from 20× stay.
 
-Dev preview: `/?mockhud&novote&boxnews` (one of each rarity in turn, `=<rarity or item id>` only that, `=all` a flood).
+Dev preview: `/?mockhud&boxnews` (one of each rarity in turn, `=<rarity or item id>` only that, `=all` a flood).
 
 ## Ban screen
 
 `BanScreen.svelte`. A banned player gets "You are banned", the reason and, for a ban that lifts by itself, the time left. "Play solo meanwhile" (or `Esc`) shrinks it to a line at the top left with the countdown. The client reconnects by itself one second after the ban is over, also after a reload. The screen frees the pointer and counts as an overlay for game binds.
 
-## RTV request
-
-A small CS2-style vote notice (like the kick or pause vote) at the top centre, under the map name, while an RTV request is open ([gameplay.md](gameplay.md#map-rotation-and-voting); `RtvRequest.svelte`):
-
-- Header "Map vote request" and the seconds left; text "**<name>** wants to vote for a new map (Bhop · Meadow)" (the nominated map, if any).
-- Two buttons **1 Yes** / **2 No** with live counts, your own answer highlighted (the initiator starts on Yes), a 20 s countdown bar, and "1 = Yes · 2 = No · 2/4 yes needed".
-- Keys `1` / `2` answer while the request is open (they do not trigger their binds then; `3`+ keep theirs). With a free cursor (pointer not locked), the buttons can be clicked.
-- Spectators see it with "Spectating: you cannot vote".
-- When it closes it shows "Passed: map vote starting" (green) or "Declined" (red) for 2.5 s; a passed request is replaced by the vote panel at once.
-
-Key routing (`apps/web/src/lib/game/vote.ts` `routeVoteKey`, ahead of binds): map vote open: `1`–`9` vote (up to 8 maps and Extend); else RTV request open: `1` yes, `2` no; else the key's bind runs (for example Zombie Run weapon slots).
-
 <a id="zombies-hud"></a>
 
 ## Zombie Run HUD
 
-Shown on Zombie Run maps (`ZombiesHud.svelte`, [modes.md](modes.md#zombies)): a round banner under the map name (countdown; Survivor/Zombie, round clock, zone, zombies alive, your kills / team kills; result summary), route progress bar and the gate line ("Gate 2/5: get half the survivors into the green area" or "Gate 2/5 opens in 23 s"), short flash banners (checkpoint, gate, turned), kill feed top right, health (5 pips; a bar as a zombie) and weapon / ammo / reload bar bottom right, a loadout list (keys 1-4) while it is open, hit markers (white, yellow for headshots, red for kills), a red vignette when hit, and the sniper scope overlay. Binds in Zombie Run: mouse1 fire, mouse2 scope, R reload, 1-4 weapon (map vote while one is open).
+Shown on Zombie Run maps (`ZombiesHud.svelte`, [modes.md](modes.md#zombies)): a round banner under the map name (countdown; Survivor/Zombie, round clock, zone, zombies alive, your kills / team kills; result summary), route progress bar and the gate line ("Gate 2/5: get half the survivors into the green area" or "Gate 2/5 opens in 23 s"), short flash banners (checkpoint, gate, turned), kill feed top right, health (5 pips; a bar as a zombie) and weapon / ammo / reload bar bottom right, a loadout list (keys 1-4) while it is open, hit markers (white, yellow for headshots, red for kills), a red vignette when hit, and the sniper scope overlay. Binds in Zombie Run: mouse1 fire, mouse2 scope, R reload, 1-4 weapon.
 
 <a id="zombie-defense-hud"></a>
 
@@ -88,7 +74,7 @@ Shown on Zombie Defense maps (`DefenseHud.svelte` and `DefenseMenu.svelte`, [mod
 
 - **Banner** under the map name. Build phase: "Wave N in 23 s", the team's ready count ("Ready 1/3", needs every living player) and "F ready · B shop" until you are ready; the seconds turn red in the last 5. Wave: wave number, wave clock, zombies left (alive and still to come), your kills / team kills, and a purple Behemoth health bar while the boss lives. Game over: "Overrun", wave reached, game time, kills, top killer and the seconds to the new game.
 - **Alerts and banners** under it: a red breach alert ("The north door is down!") and short flash lines (wave start, "Wave 3 cleared · +125 gold", boss warning in purple, refused actions).
-- **Left**: the barricades (name, one box per plank, yellow under half, red when broken, `+` per Reinforced level) and the team (ready marks in the build phase, dead / next wave). Hidden while the map vote or a menu is open.
+- **Left**: the barricades (name, one box per plank, yellow under half, red when broken, `+` per Reinforced level) and the team (ready marks in the build phase, dead / next wave). Hidden while a menu is open.
 - **Prompt** under the crosshair: what E does where you stand ("Hold E to repair the north door · 3/6", "Repairing …", "E: build a turret here", "E: Sentry L2 (upgrade / sell)"). The closer of a damaged barricade (within 96 units of its inside node, any phase) and a pad (within 96 units, build phase only) wins.
 - **Bottom right**: gold (with a "+15" when it grows), health bar with numbers (max HP grows with the shop), weapon, magazine / reserve, reload bar and the keys of the owned weapons (`1`–`5` in the order pistol, SMG, shotgun, LMG, sniper).
 - **Kill feed** top right (yours framed; turret kills read "Your Sentry · Walker"), hit markers, red vignette when hit, sniper scope, "You died" / "Next build phase" panels.
@@ -98,7 +84,7 @@ In the world: barricade planks per opening with a count label on both faces ("4/
 
 Sounds reuse existing recordings through the infected names: gunshots per weapon (sentry and scattergun turrets use the SMG and shotgun shots, at most one per turret every 110 ms; the mortar launch the sniper shot), hit / headshot / kill markers, hurt and death, plank torn and mortar blast (the beacon smash), plank put back (knife into wood), turret built (beacon), tesla (beacon use), refused purchase (dry fire), purchase and swap (handling), wave start (zone bell) and wave cleared (record chime).
 
-Dev preview: `/?mockhud&mode=defense&scene=<scene>` with the scenes `build`, `shop`, `weapons`, `upgrades`, `barricades`, `pad`, `turret`, `wave`, `breach`, `boss`, `dead` and `ended` (list: `DEFENSE_MOCK_SCENES` in `ui/defense-mock.ts`); in the mock, number keys and clicks page through the menus and `B` / `E` open and close them. `&vote=9` shows a map vote with 8 maps and Extend.
+Dev preview: `/?mockhud&mode=defense&scene=<scene>` with the scenes `build`, `shop`, `weapons`, `upgrades`, `barricades`, `pad`, `turret`, `wave`, `breach`, `boss`, `dead` and `ended` (list: `DEFENSE_MOCK_SCENES` in `ui/defense-mock.ts`); in the mock, number keys and clicks page through the menus and `B` / `E` open and close them.
 
 ## Hide and seek HUD
 
@@ -125,7 +111,7 @@ Shown on infected maps (`InfectedHud.svelte`, [modes.md](modes.md#infected)). Pu
 - **Spectating.** Popups and the highlighted summary row are the target's; no popups in free-fly; no ammo prompt, hit arcs or hit marker.
 - **Reduced motion** (`prefers-reduced-motion: reduce`): no animation runs in this HUD and every event cue eases in and out (hurt vignette, hit marker, hit arcs, score popups, flash, UAV line, perk toast, +20s and +AMMO). The M.O.A.B. detonation is a dim amber wash (peak opacity 0.3) that eases in and fades once. The hurt vignette is softer: it takes 150 ms to reach 0.4 and continues from its level on repeated hits. Recoil is not affected ([modes.md](modes.md#infected)).
 
-Dev preview: `/?mockhud&mode=infected&scene=<scene>` with the scenes `survivor`, `reload`, `low`, `empty`, `emptypistol`, `scope`, `scopedry`, `alpha`, `infected`, `down`, `last`, `stack`, `moab`, `ended`, `ended2`, `ended16`, `ended32`, `spec`, `specended`, `practice` and `practicescope` (list: `INF_MOCK_SCENES` in `ui/infected-mock.ts`). `&vote=1` keeps the map vote open, `&keys=0` hides the keys display, `&scale=1` forces `--hud-scale`. The mock re-issues the scene about once a second and shows popups and timed labels mid-life.
+Dev preview: `/?mockhud&mode=infected&scene=<scene>` with the scenes `survivor`, `reload`, `low`, `empty`, `emptypistol`, `scope`, `scopedry`, `alpha`, `infected`, `down`, `last`, `stack`, `moab`, `ended`, `ended2`, `ended16`, `ended32`, `spec`, `specended`, `practice` and `practicescope` (list: `INF_MOCK_SCENES` in `ui/infected-mock.ts`). `&keys=0` hides the keys display, `&scale=1` forces `--hud-scale`. The mock re-issues the scene about once a second and shows popups and timed labels mid-life.
 
 ## Tournament HUD
 
@@ -189,7 +175,8 @@ Opened with `` ` `` or `~`. A CS-style panel in the top half of the screen: scro
 | `cl_crosshairsize`, `cl_crosshairgap`, `cl_crosshairthickness`, `cl_crosshaircolor_r/g/b`, `cl_crosshairdot` | CS-like | Crosshair |
 | `name <name>` | | Change guest name (logged-in players always show their username) |
 | `bind <key> <command>`, `unbind <key>` | | Key bindings |
-| `map <id>` | | Change map (solo only) |
+| `map <id>` | | Play that map: online, join its lobby ([gameplay.md](gameplay.md#lobbies)); solo, load it |
+| `slot <n>` | | Weapon slot (number keys; `vote <n>` is the old name, kept for saved binds) |
 | `connect <url>`, `disconnect` | | Manual server connection |
 | `sv_*` | per map | Physics cvars (solo only; runs become unofficial) |
 | `cvarlist`, `help`, `clear` | | Console helpers |
@@ -200,11 +187,11 @@ Settings are saved to localStorage on change.
 
 A CS2-style pause menu opened with `Esc` (pointer lock is released). The game stays visible behind a dark gradient; the HUD is hidden while it is open. Components live in `apps/web/src/lib/ui/menu/` (`EscMenu.svelte` and one component per submenu); pure helpers (map grouping, settings sections, cvar defaults) are in `menu.ts` with unit tests.
 
-Main menu (left column): brand, current map and mode, then the entries **Resume**, **Change map**, **Settings**, **Shop**, **Inventory**, **Coins**, **Casino**, **Account** (and **Admin** for admin accounts, see below), and below them the account line ("Logged in as X" or "Guest · runs are not saved") and a key hint. A submenu opens in a panel beside the entries; clicking its entry again folds it.
+Main menu (left column): brand, current map, mode and (online) the players in its lobby, then the entries **Resume**, **Servers**, **Settings**, **Shop**, **Inventory**, **Coins**, **Casino**, **Account** (and **Admin** for admin accounts, see below), and below them the account line ("Logged in as X" or "Guest · runs are not saved") and a key hint. A submenu opens in a panel beside the entries; clicking its entry again folds it.
 
 Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the open submenu, `←`/`→` (and `Home`/`End`) switch tabs. `Esc` goes back one level (submenu to main menu), then resumes. In the map filter and the item search, `Esc` first clears the text. Focus is always visible.
 
-- **Change map**: tabs **All** plus one per gamemode with maps, in `GAME_MODES` registry order and labels (Surf, Bhop, Tag, …), so new modes appear without UI changes. Opens on the current map's mode. Within a mode, maps sort by difficulty (easy first), then title, then size. Each row shows title, id, an easy/hard badge (Medium/Large for maps that come in sizes, `mapTag` in `menu.ts`), and marks the current map. A filter box matches title, id or size. Picking a map switches at once and resumes in solo or when you are alone on the server (`canChangeMap`). With others online every map stays clickable (button tooltip and tag "Request map vote"): picking one starts an RTV request nominating it and resumes, so the modal is visible. The notice above the list says so, or, when requests are not possible, why and for how long: "Map vote declined — try again in 45 s", "Map vote requests open in 12 s" (first 20 s of a map), "A map vote is in progress", "A map vote request is open", or "Spectators cannot request a map vote" (rows read-only then). The current map and admin-disabled maps ("Disabled by admin") cannot be nominated. State logic: `mapMenuState` / `mapRowPickable` in `menu.ts`.
+- <a id="server-browser"></a>**Servers** (`MapMenu.svelte`): the server browser. Every map is its own lobby ([gameplay.md](gameplay.md#lobbies)); picking one joins the players there (online) or loads it solo (offline), and resumes. Tabs **All** plus one per gamemode with maps, in `GAME_MODES` registry order and labels (Surf, Bhop, Tag, …), so new modes appear without UI changes. Opens on **All**, which starts with **Playing now**: the lobbies with players, busiest first. Each gamemode heading adds its players ("Surf · 4 players"). Within a mode, maps sort by difficulty (easy first), then title, then size. Each row shows title, id (the mode in Playing now), the players in that lobby ("Empty", "1 player", "3 players"; online only), an easy/hard badge (Medium/Large for maps that come in sizes, `mapTag` in `menu.ts`) and **Join** (**Play** offline); your own map is marked "You are here" and is not a button. A filter box matches title, id or size. The line above the list says how many are online. Maps disabled by an admin are greyed "Disabled by admin" and cannot be picked (admins still can). Counts come from `lobbies` ([architecture.md](architecture.md#lobbies)); helpers `lobbyPlayers`, `busyMaps`, `playersLabel` in `menu.ts`. Dev preview: `/?mockhud&open=settings&view=maps` (`&solo=1` offline).
 - **Settings**: tabs
   - Mouse: sensitivity (slider + number), Scoped sensitivity (`zoom_sensitivity_ratio`), Toggle aim (`cl_aimtoggle`), `m_yaw`, `m_pitch`
   - Video: FOV, **Fullscreen (blocks Ctrl+W)** (`cl_fullscreen`; in browsers without the Keyboard Lock API a note instead), show FPS, show position
@@ -230,15 +217,15 @@ Keyboard: `↑`/`↓` move between the main entries, `Tab` moves through the ope
   - **Coinflip** (`CoinflipGame.svelte`): pick a side (arrow keys), a 3D coin is tossed and lands on the result.
   - **Crash** (`CrashGame.svelte`): a rising curve with the multiplier; the main button becomes **Cash out · n**. Optional auto cash-out with its chance. A running round is picked up again when the menu is reopened or after a reconnect; one that ends while the menu is closed shows a notice. After a cash-out (also an automatic one) the curve climbs on to the real crash and shows how much more there was; the next bet cuts it short. The bet is settled at the cash-out, the rest is only shown. A click on Cash out just after the crash does not place a bet (1 s). A drum roll builds up with the multiplier (`crashBuild` in `audio/mix.ts`): a snare roll and, from 1.3×, timpani, louder, brighter and faster the higher it climbs; 9 dB softer after a cash-out; a cymbal at the crash.
   - **Slots** (`SlotsGame.svelte`, symbols in `SlotSymbol.svelte`): three reels stop one after another, the last one later when the first two match; the pay table is below.
-  - With reduced motion there is no spin, toss, shake or count-up. Guests see the games and a login button; offline or on a server without a casino one line says so. Dev preview: `/?mockhud&novote&open=settings&view=casino` (`&tab=coinflip|crash|slots`, `&nocasino`, `&roll=<0..1>` a fixed roll).
+  - With reduced motion there is no spin, toss, shake or count-up. Guests see the games and a login button; offline or on a server without a casino one line says so. Dev preview: `/?mockhud&open=settings&view=casino` (`&tab=coinflip|crash|slots`, `&nocasino`, `&roll=<0..1>` a fixed roll).
 - **Account**: "Logged in as X" with **Log out**, or guest with **Log in / Register** (opens the account panel).
-- <a id="admin"></a>**Admin** (only when the server says the account is admin, [gameplay.md](gameplay.md#admin); `AdminMenu.svelte`): **Extend +10 min** in the header, then tabs
-  - Maps: every map grouped by gamemode with an on/off switch (the last enabled map cannot be switched off) and **Force change** with an inline "Change now? Yes / Cancel"; the current map is marked.
-  - Players: connected players with an Admin / Account / Guest badge and the coin balance of accounts, **Coins** (accounts; inline amount with Add, Subtract, and Reset with a confirm), **Item** (accounts; pick an item and Give, or Remove one they own) and **Ban** (inline confirm with an optional reason; not for admins), plus both for an account by username, also offline.
+- <a id="admin"></a>**Admin** (only when the server says the account is admin, [gameplay.md](gameplay.md#admin); `AdminMenu.svelte`): tabs
+  - Maps: every map grouped by gamemode with an on/off switch (the last enabled map cannot be switched off); your own map is marked.
+  - Players: connected players with an Admin / Account / Guest badge, the map they are on and the coin balance of accounts, **Coins** (accounts; inline amount with Add, Subtract, and Reset with a confirm), **Item** (accounts; pick an item and Give, or Remove one they own) and **Ban** (inline confirm with an optional reason; not for admins), plus both for an account by username, also offline.
   - Bans: username, kind, reason, date, who banned, when it lifts, and **Unban**.
   - Abuse log: the latest 50 automatic warnings and bans with their evidence.
 
-  The result of the last action shows under the tabs. In Change map, maps disabled by an admin are greyed with "Disabled by admin" and cannot be picked (admins still can).
+  The result of the last action shows under the tabs.
 
 All values are the same cvars as the console and are saved the same way.
 
@@ -257,7 +244,7 @@ The race ghost ([gameplay.md](gameplay.md#ghosts)) is the player character ([cha
 | `Ctrl` | Crouch |
 | `Y` | Chat |
 | `Tab` | Scoreboard |
-| `1`–`9` | Map vote (while open); `1` / `2` = yes / no on an RTV request; else their binds (`vote N`: Zombie Run weapons `1`–`4`; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B., or next primary on the practice range; Zombie Defense weapons `1`–`5`, or the rows of an open shop or pad menu; Tournament duelists `1` sniper, `2` pistol, `3` knife, spectators `1` / `2` bet while betting is open) |
+| `1`–`9` | Their binds (`slot <n>`): Zombie Run weapons `1`–`4`; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B., or next primary on the practice range; Zombie Defense weapons `1`–`5`, or the rows of an open shop or pad menu; Tournament duelists `1` sniper, `2` pistol, `3` knife, spectators `1` / `2` bet while betting is open |
 | `Mouse1` | Attack: fire, knife or claw swing |
 | `Mouse2` | Zombie Run: sniper scope. Infected and Tournament: aim down sights (held; toggled with `cl_aimtoggle 1`), or throw the knife as infected |
 | `M` | Toggle spectate |

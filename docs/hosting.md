@@ -52,7 +52,7 @@ The container listens on `HOST:PORT` (default `0.0.0.0:8080`):
 
 | Variable | Default in image | Purpose |
 | --- | --- | --- |
-| `NODE_ENV` | `production` | Enables public connection limits and disables `MAP_DURATION_OVERRIDE` |
+| `NODE_ENV` | `production` | Enables public connection limits |
 | `HOST` | `0.0.0.0` | Network interface to bind |
 | `PORT` | `8080` | HTTP and WebSocket port (plain server default outside Docker is `27015`) |
 | `METRICS_PORT` | unset | Optional Prometheus listener on `127.0.0.1`. Leave unset to disable it. |

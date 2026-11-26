@@ -65,11 +65,6 @@
 		resetting = false;
 	}
 
-	function forceMap(id: string) {
-		confirming = null;
-		api.admin({ action: 'forceMap', mapId: id });
-	}
-
 	function ban(targetId: number) {
 		const r = reason.trim();
 		confirming = null;
@@ -128,9 +123,6 @@
 
 <header class="head">
 	<h2 id="ss-menu-title">Admin</h2>
-	<button type="button" class="ss-button ghost small" onclick={() => api.admin({ action: 'extend' })}>
-		Extend +10 min
-	</button>
 </header>
 
 <Tabs {tabs} selected={tab} onselect={(id) => (tab = id as AdminTabId)} label="Admin sections" idPrefix="ss-admin" />
@@ -150,7 +142,7 @@
 								{#key `${m.enabled}:${reset}`}
 									<Toggle
 										label={mapTitle(m)}
-										hint={current ? `${m.id} · current map` : m.id}
+										hint={current ? `${m.id} · you are here` : m.id}
 										checked={m.enabled}
 										onset={(on) => {
 											// The last enabled map stays on: redraw the switch; the server explains why.
@@ -160,23 +152,12 @@
 									/>
 								{/key}
 							</div>
-							{#if confirming === `force:${m.id}`}
-								<span class="confirm" role="group" aria-label="Confirm map change">
-									<span class="q">Change now?</span>
-									<button type="button" class="ss-button small" onclick={() => forceMap(m.id)}>Yes</button>
-									<button type="button" class="ss-button ghost small" onclick={() => (confirming = null)}>Cancel</button>
-								</span>
-							{:else}
-								<button type="button" class="ss-button ghost small" onclick={() => ask(`force:${m.id}`)}>
-									Force change
-								</button>
-							{/if}
 						</li>
 					{/each}
 				</ul>
 			</section>
 		{/each}
-		<p class="hint">Disabled maps leave votes, !rtv and Change map. At least one map stays enabled.</p>
+		<p class="hint">Only admins can join the lobby of a disabled map; players already in it stay. At least one map stays enabled.</p>
 	{:else if tab === 'players'}
 		<ul class="rows">
 			{#each players as p (p.id)}
@@ -185,6 +166,7 @@
 					{#if confirming !== `coins:${p.id}` && confirming !== `item:${p.id}`}
 						<span class="badge" class:admin={p.admin}>{p.admin ? 'Admin' : p.guest ? 'Guest' : 'Account'}</span>
 					{/if}
+					{#if p.map}<span class="muted where">{p.map}</span>{/if}
 					{#if p.coins !== undefined}<span class="muted balance ss-num">{formatWhole(p.coins)} coins</span>{/if}
 					<span class="grow"></span>
 					{#if p.account && confirming === `coins:${p.id}`}

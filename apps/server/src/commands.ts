@@ -1,7 +1,10 @@
 /** Chat commands (docs/gameplay.md#chat). */
 
 export type Command =
+	/** Gone with the map vote: answered with a hint to the server browser. */
 	| { cmd: 'rtv' }
+	/** `!map [name]`: list the busy lobbies, or move to a map's lobby. */
+	| { cmd: 'map'; name: string }
 	| { cmd: 'top' }
 	| { cmd: 'pb' }
 	| { cmd: 'spec'; name: string }
@@ -14,7 +17,7 @@ export const HELP_LINES = [
 	'Commands:',
 	'!r / !restart: back to start, reset timer',
 	'!back: back to the current stage or checkpoint',
-	'!rtv: request a map vote (everyone answers 1 = yes, 2 = no)',
+	'!map [name]: who plays where, or join the lobby of a map (also Esc › Servers)',
 	'!top: top 10 for this map',
 	'!pb: your PB and rank',
 	'!spec [name]: spectate (a player, or the next one); again to play',
@@ -32,6 +35,9 @@ export function parseCommand(text: string): Command | null {
 	switch (name) {
 		case 'rtv':
 			return { cmd: 'rtv' };
+		case 'map':
+		case 'join':
+			return { cmd: 'map', name: arg };
 		case 'top':
 			return { cmd: 'top' };
 		case 'pb':

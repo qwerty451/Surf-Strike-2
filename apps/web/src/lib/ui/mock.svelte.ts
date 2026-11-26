@@ -3,18 +3,17 @@
  * with sample data and a GameApi that only flips UI flags, so the UI can be
  * previewed without the engine. Optional `&open=console|settings|maps|auth|scoreboard|chat|desktop`;
  * with `open=settings`, `&view=maps|settings|account` and `&tab=mouse|video|hud|audio`
- * start the Esc menu on a submenu (`&solo=0` makes map changes vote-only; `&view=admin`
- * logs in as an admin and opens the Admin submenu, `&tab=maps|players|bans`; `&rtv=1` shows
- * an RTV request instead of the map vote, `&rtv=cooldown` a declined-request cooldown).
+ * start the Esc menu on a submenu (`&view=maps` the server browser, `&solo=1` offline; `&view=admin`
+ * logs in as an admin and opens the Admin submenu, `&tab=maps|players|bans`).
  * Scores: `&mode=<gamemode>` (its score panel and scoreboard), `&players=<n>` (default 5),
  * `&self=<n>` your position, `&old=1` an older server (no leaderboard top, no totals),
- * `&novote=1` without the map vote. Coins: `&coins=<n>` n award popups, `&coins=0` a guest,
+ * Coins: `&coins=<n>` n award popups, `&coins=0` a guest,
  * `&view=coins` the Coins submenu, `&view=shop` the Shop (`&balance=<coins>`, `&noshop` a server without it),
  * `&view=casino` the Casino, playable (`&tab=coinflip|crash|slots`, `&nocasino` a server without it, `&roll=<0..1>` a fixed roll),
  * `&view=inventory` the Inventory (`&items=<n>` owned items, default 130, with made-up ones; 0 = empty), `&ban=<seconds>` the ban screen (`&ban=0` permanent),
  * `&boxnews` loot box news (one of each rarity in turn; `=<rarity or item id>`, `=all` many at once).
  * Infected: `&mode=infected` shows the Infected HUD: `&scene=` one of
- * INF_MOCK_SCENES (infected-mock.ts), `&vote=1` keeps the map vote open, `&keys=0` hides
+ * INF_MOCK_SCENES (infected-mock.ts), `&keys=0` hides
  * the keys display. `&scale=1` forces `--hud-scale`.
  * Tournament: `&mode=tournament` shows the Tournament HUD: `&scene=` one of TRN_MOCK_SCENES
  * (tournament-mock.ts), `&entrants=2..16` the bracket size (default 8), `&bracket=1` (or hold B) the tree.
@@ -150,13 +149,12 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 	if (params.has('boxall')) mockOwned(130);
 	const owned = coinsN === 0 ? [] : mockOwned(Number(params.get('items') ?? 130));
 	const hud: HudStateShape = $state({
-		online: true,
+		online: params.get('solo') !== '1',
 		connecting: false,
 		playerCount: 12,
 		maxPlayers: 32,
 		mapId: infScene ? 'infected_outpost' : defScene ? 'defense_blackthorn' : trnScene ? 'trn_glass' : 'surf_ember',
 		mapTitle: infScene ? 'Outpost' : defScene ? 'Blackthorn Farm' : trnScene ? 'Glass Arena' : 'Ember',
-		mapTimeLeft: 462,
 		gameMode: mode,
 		modeFamily: gameMode(mode).family,
 		tag: null,
@@ -172,9 +170,13 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			{ id: 'bhop_meadow', title: 'Meadow', kind: 'bhop', difficulty: 'easy' },
 			{ id: 'surf_tidal', title: 'Tidal', kind: 'surf', difficulty: 'easy' },
 			{ id: 'bhop_quarry', title: 'Quarry', kind: 'bhop', difficulty: 'hard' },
-			{ id: 'tag_courtyard', title: 'Courtyard', kind: 'tag', difficulty: 'easy', disabled: true }
+			{ id: 'tag_courtyard', title: 'Courtyard', kind: 'tag', difficulty: 'easy', disabled: true },
+			{ id: 'zombies_foundry', title: 'Foundry', kind: 'zombies', difficulty: 'medium' },
+			{ id: 'infected_outpost', title: 'Outpost', kind: 'infected', difficulty: 'medium' },
+			{ id: 'hns_lido_m', title: 'Lido Bay', kind: 'hns', difficulty: 'easy', size: 'medium' },
+			{ id: 'hns_lido', title: 'Lido Bay', kind: 'hns', difficulty: 'easy', size: 'large' }
 		],
-		canChangeMap: params.get('solo') !== '0',
+		lobbies: params.get('solo') === '1' ? null : { surf_ember: 12, surf_tidal: 3, tag_courtyard: 5, zombies_foundry: 1, infected_outpost: 8 },
 		speed: 1287,
 		speedTrend: 'up',
 		keys: { w: false, a: true, s: false, d: false, jump: true, duck: false },
@@ -281,42 +283,6 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			{ id: 4, from: null, text: 'New map record by glidepath: 02:18.902', system: true, at: t0 }
 		],
 		chatOpen: open === 'chat',
-		vote: params.has('rtv') || params.has('novote') || ((infScene || defScene) && !params.has('vote'))
-			? null
-			: {
-					labels: [
-						'Surf · Tidal',
-						'Surf · Aurora',
-						'Bhop · Meadow',
-						'Bhop · Quarry',
-						'Tag · Courtyard',
-						'Zombie Run · Foundry',
-						...(params.get('vote') === '9' ? ['Zombie Defense · Blackthorn Farm', 'Infected · Outpost'] : []),
-						'Extend 10 min'
-					],
-					counts: params.get('vote') === '9' ? [3, 5, 1, 0, 2, 1, 4, 0, 2] : [3, 5, 1, 0, 2, 1, 2],
-					endsAt: t0 + 14000,
-					duration: 20,
-					myVote: 2,
-					rtv: false,
-					result: null
-				},
-		rtvRequest:
-			params.get('rtv') === '1'
-				? {
-						initiator: 'glidepath',
-						mapLabel: 'Bhop · Meadow',
-						yes: 2,
-						no: 1,
-						needed: 4,
-						endsAt: t0 + 14000,
-						duration: 20,
-						myChoice: null,
-						canVote: true,
-						result: null
-					}
-				: null,
-		rtvCooldown: params.get('rtv') === 'cooldown' ? { until: t0 + 45_000, reason: 'declined' } : null,
 		scoreboardOpen: open === 'scoreboard',
 		scoreboard: rows,
 		richest: old
@@ -445,9 +411,6 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		closeChat: () => (hud.chatOpen = false),
 		toggleConsole: () => (hud.consoleOpen = !hud.consoleOpen),
 		closeSettings: () => (hud.settingsOpen = false),
-		vote(option) {
-			if (hud.vote) hud.vote.myVote = option;
-		},
 		trnBet(pick) {
 			const t = hud.tournament;
 			const b = t?.bet;
@@ -456,16 +419,6 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			const a = b.a.id === pick ? { ...b.a, count: b.a.count + 1 } : b.a;
 			const bb = b.b.id === pick ? { ...b.b, count: b.b.count + 1 } : b.b;
 			hud.tournament = { ...t, bet: { ...b, a, b: bb, canBet: false, mine: { pick, name: side.name }, note: { text: `Your bet: 20 on ${side.name}`, tone: 'ok', at: performance.now() } } };
-		},
-		rtvVote(yes) {
-			const r = hud.rtvRequest;
-			if (!r || r.myChoice === (yes ? 'yes' : 'no')) return;
-			hud.rtvRequest = {
-				...r,
-				myChoice: yes ? 'yes' : 'no',
-				yes: r.yes + (yes ? 1 : 0) - (r.myChoice === 'yes' ? 1 : 0),
-				no: r.no + (yes ? 0 : 1) - (r.myChoice === 'no' ? 1 : 0)
-			};
 		},
 		shopBuy(item) {
 			const price = hud.shop?.items.find((i) => i.id === item)?.price ?? 0;
@@ -564,9 +517,6 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			} else if (a.action === 'unban') {
 				hud.adminState = { ...st, bans: st.bans.filter((b) => b.id !== a.banId) };
 				done('Unbanned.');
-			} else if (a.action === 'forceMap') {
-				api.changeMap(a.mapId);
-				done(`Changed to ${a.mapId}.`);
 			} else if (a.action === 'coins') {
 				const players = st.players.map((x) => {
 					if (x.account?.toLowerCase() !== a.username.toLowerCase()) return x;
@@ -581,15 +531,23 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			} else if (a.action === 'giveItem') {
 				hud.adminState = { ...st, players: st.players.map((x) => (x.id === a.targetId ? { ...x, items: [...(x.items ?? []), a.item] } : x)) };
 				done(`${st.players.find((x) => x.id === a.targetId)?.name} got ${getCosmetic(a.item)?.name}.`);
-			} else if (a.action === 'extend') {
-				done('Extended by 10 minutes.');
 			}
 		},
 		changeMap(id) {
 			const m = hud.maps.find((x) => x.id === id);
 			if (m) {
+				// Like joining that lobby: our count moves with us.
+				const from = hud.mapId;
 				hud.mapId = m.id;
 				hud.mapTitle = m.title;
+				if (hud.lobbies) {
+					const next = { ...hud.lobbies };
+					if ((next[from] ?? 0) > 1) next[from]--;
+					else delete next[from];
+					next[id] = (next[id] ?? 0) + 1;
+					hud.lobbies = next;
+					hud.playerCount = next[id];
+				}
 			}
 		}
 	};
@@ -635,19 +593,17 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			hud.spectating = hud.spectating ? null : { targetName: 'glidepath', freeFly: false };
 		} else if (e.key === 'r') {
 			hud.splitPopup = { label: 'Stage 4', ticks: hud.runTicks, delta: Math.round(0.42 * T), at: performance.now() };
-		} else if (e.key === 'b' && trnScene) {
+		} else if (e.key === 'g' && trnScene) {
 			hud.bracketHeld = true;
-		} else if (hud.rtvRequest && (e.key === '1' || e.key === '2')) api.rtvVote(e.key === '1');
-		else if (hud.defense?.menu && e.key >= '1' && e.key <= '9') mockModeUi({ kind: 'pick', index: Number(e.key) - 1 });
+		} else if (hud.defense?.menu && e.key >= '1' && e.key <= '9') mockModeUi({ kind: 'pick', index: Number(e.key) - 1 });
 		else if (defScene && (e.key === 'b' || e.key === 'e')) {
 			defPage = hud.defense?.menu ? (defPage === 'shop' || defPage === 'pad' || defPage === 'turret' ? null : 'shop') : e.key === 'b' ? 'shop' : 'pad';
 			hud.defense = mockDefenseView(defScene, performance.now(), defPage);
 		} else if (hud.tournament?.bet?.canBet && (e.key === '1' || e.key === '2')) api.trnBet(e.key === '1' ? hud.tournament.bet.a.id : hud.tournament.bet.b.id);
-		else if (e.key >= '1' && e.key <= '9') api.vote(Number(e.key));
 	};
 	const up = (e: KeyboardEvent) => {
 		if (e.key === 'Tab') hud.scoreboardOpen = false;
-		if (e.key === 'b' && trnScene && params.get('bracket') !== '1') hud.bracketHeld = false;
+		if (e.key === 'g' && trnScene && params.get('bracket') !== '1') hud.bracketHeld = false;
 	};
 	window.addEventListener('keydown', down);
 	window.addEventListener('keyup', up);
@@ -695,7 +651,6 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		hud.speedTrend = s > hud.speed + 0.5 ? 'up' : s < hud.speed - 0.5 ? 'down' : 'flat';
 		hud.speed = s;
 		hud.runTicks = Math.round((72.402 + t) * T);
-		hud.mapTimeLeft = Math.max(0, 462 - t);
 		// Infected: re-issue the scene so popups, arcs and hit markers stay on screen.
 		if (infScene && performance.now() - infAt > 1000) {
 			infAt = performance.now();

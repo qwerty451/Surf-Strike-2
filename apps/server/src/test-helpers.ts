@@ -169,9 +169,17 @@ export class TestClient {
 		return this.messages.filter((m) => m.type === type) as Extract<ServerMessage, { type: K }>[];
 	}
 
-	async hello(name: string, playerId: string = crypto.randomUUID(), token?: string) {
+	/** `map`: the lobby to ask for (docs/architecture.md#lobbies); none = the server's default map. */
+	async hello(name: string, playerId: string = crypto.randomUUID(), token?: string, map?: string) {
 		await this.open();
-		this.send({ type: 'hello', playerId, name, version: PROTOCOL_VERSION, ...(token === undefined ? {} : { token }) });
+		this.send({
+			type: 'hello',
+			playerId,
+			name,
+			version: PROTOCOL_VERSION,
+			...(token === undefined ? {} : { token }),
+			...(map === undefined ? {} : { map })
+		});
 		return this.waitFor('welcome');
 	}
 
