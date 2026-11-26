@@ -20,5 +20,6 @@ export * from './body-motion.ts';
 export * from './modes/index.ts';
 export * from './economy.ts';
 export * from './modes/hunt.ts';
+export * from './modes/tournament/net.ts';
 export * from './cosmetics.ts';
 export * from './casino.ts';

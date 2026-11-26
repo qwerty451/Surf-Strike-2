@@ -29,6 +29,8 @@ export interface MapDef {
 	zombies?: ZombieRoute;
 	/** Hide and seek maps (required there): hider/seeker spawns and the seeker cage (docs/modes.md#hide-and-seek). */
 	hns?: HnsMapInfo;
+	/** Tournament maps (required there): duel spawns, arena and spectator deck (docs/modes.md#tournament). */
+	tournament?: TournamentMapInfo;
 	brushes: BrushDef[];
 	zones: Zone[];
 	theme: Theme;
@@ -77,6 +79,22 @@ export interface HnsMapInfo {
 	seekerCage?: { min: Vec3; max: Vec3 };
 	/** Where the cash bag appears (docs/economy.md#hide-and-seek). Without it the map has no bag. */
 	cashBag?: HnsCashBag;
+}
+
+/**
+ * Tournament map (docs/modes.md#tournament): a small, mirror-symmetric arena
+ * under a glass roof; spectators stand on the roof (the deck) and cannot get
+ * down into the arena.
+ */
+export interface TournamentMapInfo {
+	/** The two duel spawns, mirror images of each other, facing each other. */
+	duelSpawns: [Spawn, Spawn];
+	/** The arena's playable box (feet positions inside it). */
+	arena: { min: Vec3; max: Vec3 };
+	/** The spectator deck on the glass (feet positions inside it). */
+	deck: { min: Vec3; max: Vec3 };
+	/** >= 8 spread-out spawn points on the deck. */
+	deckSpawns: Spawn[];
 }
 
 /** A fixed, open spot near the middle of the playable area that is walkable from everywhere. */

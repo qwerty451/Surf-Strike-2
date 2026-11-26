@@ -309,6 +309,14 @@ export const HNS_SCORE: ModeScoreDef = {
 	panel: { list: 'standing', subtitle: round, maxRows: 8, summary: [COINS] }
 };
 
+/** Tournament (placeholder until the mode's own columns). */
+export const TOURNAMENT_SCORE: ModeScoreDef = {
+	columns: [KILLS, STATUS, PING],
+	compare: (a, b) => desc(a.kills, b.kills) || byName(a, b),
+	mark: () => null,
+	panel: { list: 'standing', subtitle: round, maxRows: 8, summary: [COINS] }
+};
+
 // ---------------------------------------------------------------------------
 // Views
 // ---------------------------------------------------------------------------

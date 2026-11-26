@@ -128,7 +128,7 @@ export interface ModeView {
 export type ModeCommand = 'beacon' | 'moab';
 
 /** Server messages the game forwards to the mode as they are; a mode ignores those of others. */
-export type ModeServerMessage = Extract<ServerMessage, { type: 'modeState' | 'zm' | 'inf' | 'hns' | 'tagged' }>;
+export type ModeServerMessage = Extract<ServerMessage, { type: 'modeState' | 'zm' | 'inf' | 'hns' | 'trn' | 'tagged' }>;
 
 export interface ClientMode {
 	/** For tests and the dev console; the game does not read it. */

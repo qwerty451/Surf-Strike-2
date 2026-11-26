@@ -28,6 +28,9 @@ export function createServerMode(host: ModeHost, opts: ModeOptions = {}): Server
 			return new InfectedMode(host, opts.infected);
 		case 'hns':
 			return new HnsMode(host, { ...hnsEnvOptions(), ...opts.hns });
+		case 'tournament':
+			// Contract stub: the Tournament rules module replaces this.
+			throw new Error('Tournament server mode is not built yet');
 	}
 }
 

@@ -20,7 +20,14 @@ const CLIENT_MODES: Readonly<Record<ModeFamily, ClientModeDef>> = Object.freeze(
 	tag: { create: (host) => new TagMode(host), spawn: randomSpawn },
 	coop: { create: (host) => new ZombiesMode(host), spawn: (map) => map.spawn },
 	infected: { create: (host) => new InfectedMode(host), spawn: randomSpawn },
-	hns: { create: (host) => new HnsMode(host), spawn: (map) => pick(hnsSpawns(map).hiders) }
+	hns: { create: (host) => new HnsMode(host), spawn: (map) => pick(hnsSpawns(map).hiders) },
+	// Contract stub: the Tournament client mode replaces this.
+	tournament: {
+		create: () => {
+			throw new Error('Tournament client mode is not built yet');
+		},
+		spawn: (map) => map.tournament?.deckSpawns[0] ?? map.spawn
+	}
 });
 
 /** The mode of the host's map. */

@@ -9,15 +9,15 @@
  */
 import { BHOP_CVARS, SURF_CVARS, type Cvars } from '../cvars.ts';
 import type { MapDef } from '../maps/types.ts';
-import { HNS_SCORE, INFECTED_SCORE, RACE_SCORE, TAG_SCORE, ZOMBIES_SCORE, type ModeScoreDef } from './score.ts';
+import { HNS_SCORE, INFECTED_SCORE, RACE_SCORE, TAG_SCORE, TOURNAMENT_SCORE, ZOMBIES_SCORE, type ModeScoreDef } from './score.ts';
 
-export type GameModeId = 'surf' | 'bhop' | 'tag' | 'zombies' | 'infected' | 'hns';
+export type GameModeId = 'surf' | 'bhop' | 'tag' | 'zombies' | 'infected' | 'hns' | 'tournament';
 
 /**
  * Rule family. 'race': RunTracker timer, start/end/stage/checkpoint zones,
  * run validation and leaderboards. Any other family has its own rules module.
  */
-export type ModeFamily = 'race' | 'tag' | 'coop' | 'infected' | 'hns';
+export type ModeFamily = 'race' | 'tag' | 'coop' | 'infected' | 'hns' | 'tournament';
 
 export interface GameModeDef {
 	id: GameModeId;
@@ -73,6 +73,12 @@ export const HNS_CVARS: Readonly<Cvars> = Object.freeze({
 	sv_maxspeed: 250
 });
 
+/**
+ * Tournament physics (docs/modes.md#tournament): plain bhop (CS2 jump, no
+ * bunnyhop cap), so duelists keep the normal strafe and bhop movement.
+ */
+export const TOURNAMENT_CVARS: Readonly<Cvars> = BHOP_CVARS;
+
 export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.freeze({
 	surf: {
 		id: 'surf',
@@ -127,6 +133,15 @@ export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.free
 		cvars: HNS_CVARS,
 		minPlayers: 2,
 		score: HNS_SCORE
+	},
+	tournament: {
+		id: 'tournament',
+		label: 'Tournament',
+		description: '1v1 sniper duels in a knockout bracket; everyone else watches (and knife-fights) on the glass above.',
+		family: 'tournament',
+		cvars: TOURNAMENT_CVARS,
+		minPlayers: 2,
+		score: TOURNAMENT_SCORE
 	}
 });
 

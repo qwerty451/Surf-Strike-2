@@ -1934,6 +1934,7 @@ export class Game implements CommandContext {
 			case 'zm':
 			case 'inf':
 			case 'hns':
+			case 'trn':
 			case 'tagged':
 				this.client.message?.(m, now);
 				break;

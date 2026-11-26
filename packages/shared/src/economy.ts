@@ -270,7 +270,8 @@ export const SPEED_LIMIT: Readonly<Record<GameModeId, number>> = Object.freeze({
 	tag: 3_500,
 	zombies: 1_000,
 	infected: 1_000,
-	hns: 600
+	hns: 600,
+	tournament: 3_500
 });
 
 /** Base points per rolling hour and account, exempt reasons aside. */

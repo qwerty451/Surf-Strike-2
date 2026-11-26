@@ -8,6 +8,7 @@ import type { Cvars } from './cvars.ts';
 import type { MapDef } from './maps/types.ts';
 import type { GameModeId } from './modes/index.ts';
 import type { HnsEvent, HnsStateView } from './modes/hns.ts';
+import type { TrnEvent, TrnStateView } from './modes/tournament/net.ts';
 import type { InfEvent, InfStateView } from './modes/infected/game.ts';
 import type { TagPhase, TagScore } from './modes/tag.ts';
 import type { ZmEvent, ZmStateView } from './modes/zombies/game.ts';
@@ -143,7 +144,12 @@ export interface HnsModeState extends HnsStateView {
 	mode: 'hns';
 }
 
-export type ModeState = TagModeState | ZombiesModeState | InfectedModeState | HnsModeState;
+/** Tournament state (docs/modes.md#tournament). */
+export interface TournamentModeState extends TrnStateView {
+	mode: 'tournament';
+}
+
+export type ModeState = TagModeState | ZombiesModeState | InfectedModeState | HnsModeState | TournamentModeState;
 
 /** One line of a map's leaderboard. */
 export interface RecordEntry {
@@ -234,6 +240,8 @@ export type ClientMessage =
 	/** Cash out the running crash round; counts when the server receives it. */
 	| { type: 'crashCashout' }
 	/** Admin menu (docs/gameplay.md#admin): re-checked on the server, ignored for non-admins. */
+	/** Tournament: a spectator bets TRN_BET coins on duelist `pick` of the current or next duel. */
+	| { type: 'trnBet'; pick: number }
 	| { type: 'admin'; action: AdminAction };
 
 /** Admin requests; every one is answered with `adminResult` and (for admins) `adminState`. */
@@ -416,6 +424,8 @@ export type ServerMessage =
 	| { type: 'inf'; ev: InfEvent }
 	/** Hide and seek event (spawn/teleport to that player; swing, found, round flow to everyone). */
 	| { type: 'hns'; ev: HnsEvent }
+	/** Tournament event (spawn, duel and round flow, hits, kills, tracers, ammo, bets, champion). */
+	| { type: 'trn'; ev: TrnEvent }
 	| { type: 'timeLeft'; mapTimeLeft: number }
 	/** `richest`: the accounts with the most coins, richest first, online or not (absent on older servers). */
 	| { type: 'scoreboard'; rows: ScoreRow[]; richest?: RichEntry[] }
