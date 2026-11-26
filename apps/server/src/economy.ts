@@ -136,6 +136,14 @@ export interface ModeEconomy {
 	teleported(playerId: number): void;
 	/** The player did something the server verified that counts as moving (Infected: a gunshot). Not input for playtime. */
 	acted(playerId: number): void;
+	/**
+	 * Tournament bets (docs/economy.md#tournament): take a stake (tenths) from
+	 * the account at once. Returns the open bet's ticket, or null when the
+	 * balance is too low. Casino-style: no points, no point log, no backstop.
+	 */
+	betOpen(accountId: number, stake: number): number | null;
+	/** Settle an open bet, online or not: pay `payout` tenths (0 when lost). False when it was not open (nothing paid). */
+	betClose(ticket: number, payout: number, outcome: 'won' | 'lost' | 'refund'): boolean;
 }
 
 /** Same person across reconnects. */
@@ -184,6 +192,8 @@ export class Economy {
 	private readonly pairRounds = new Map<number, { shares: Map<string, number>; enough: boolean }[]>();
 	/** earner|feeder → rounds in a row. */
 	private readonly feeds = new Map<string, number>();
+	/** Tournament stakes given back at the start (the server stopped mid-duel), until the account hears about it. */
+	private readonly trnRefunds: Map<number, number>;
 
 	constructor(
 		private readonly host: EconomyHost,
@@ -198,6 +208,8 @@ export class Economy {
 			ban: (id, strikes, evidence, exempt) => this.ban(id, strikes, evidence, exempt)
 		});
 		this.useMap(map);
+		this.trnRefunds = host.db.refundTrnBets(host.now());
+		if (this.trnRefunds.size > 0) host.log(`tournament: ${this.trnRefunds.size} open bets given back`);
 	}
 
 	// -----------------------------------------------------------------------
@@ -216,6 +228,10 @@ export class Economy {
 		if (p.accountId === null) return;
 		if (!this.active.has(p.accountId)) this.active.set(p.accountId, { ms: this.host.db.activeMs(p.accountId), dirty: false });
 		this.sendCoins(p);
+		const refund = this.trnRefunds.get(p.accountId);
+		if (refund === undefined) return;
+		this.trnRefunds.delete(p.accountId);
+		this.host.send(p, { type: 'coinsNotice', text: `The server restarted: your tournament bet of ${formatTenths(refund)} coins was given back.`, tone: 'info' });
 	}
 
 	/** `accountId`: the account that logged out or whose connection closed. */
@@ -239,7 +255,7 @@ export class Economy {
 
 	/** Every message a mode sends to one player: spawn events explain a teleport. */
 	sent(p: EconomyPlayer, msg: ServerMessage): void {
-		if ((msg.type === 'zm' || msg.type === 'inf' || msg.type === 'hns') && msg.ev.e === 'spawn') this.activities.get(p)?.expectTeleport(this.host.clock());
+		if ((msg.type === 'zm' || msg.type === 'inf' || msg.type === 'hns' || msg.type === 'trn') && msg.ev.e === 'spawn') this.activities.get(p)?.expectTeleport(this.host.clock());
 	}
 
 	/** Map change: a new map session with its own caps. */
@@ -485,6 +501,33 @@ export class Economy {
 		return r;
 	}
 
+	/** Take a tournament stake (docs/economy.md#tournament); the open bet's ticket, or null. */
+	betOpen(accountId: number, stake: number): number | null {
+		if (!Number.isInteger(stake) || stake <= 0) return null;
+		try {
+			const id = this.host.db.trnBetOpen(accountId, this.host.now(), stake);
+			if (id !== null) this.sendCoinsTo(accountId);
+			return id;
+		} catch (err) {
+			this.host.log(`tournament bet for account ${accountId} failed: ${(err as Error).message}`);
+			return null;
+		}
+	}
+
+	/** Settle a tournament bet; the account need not be online. */
+	betClose(ticket: number, payout: number, outcome: 'won' | 'lost' | 'refund'): boolean {
+		try {
+			const game = outcome === 'won' ? 'trnWin' : outcome === 'refund' ? 'trnRefund' : 'trnLoss';
+			const row = this.host.db.trnBetOpenRow(ticket);
+			if (!this.host.db.trnBetClose(ticket, this.host.now(), Math.max(0, Math.round(payout)), game)) return false;
+			if (row) this.sendCoinsTo(row.accountId);
+			return true;
+		} catch (err) {
+			this.host.log(`tournament bet ${ticket} not settled: ${(err as Error).message}`);
+			return false;
+		}
+	}
+
 	/** Send the totals again after the balance changed. */
 	sendCoinsTo(accountId: number): void {
 		for (const p of this.host.players()) if (p.accountId === accountId) this.sendCoins(p);
@@ -575,7 +618,9 @@ export class Economy {
 			acted: (id) => {
 				const p = this.player(id);
 				if (p && !p.spectating) this.activities.get(p)?.acted();
-			}
+			},
+			betOpen: (accountId, stake) => this.betOpen(accountId, stake),
+			betClose: (ticket, payout, outcome) => this.betClose(ticket, payout, outcome)
 		};
 	}
 

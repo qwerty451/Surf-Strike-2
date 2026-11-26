@@ -1,6 +1,6 @@
 # Gamemodes
 
-Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old name). There are six modes:
+Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old name). There are seven modes:
 
 | Mode | Family | Rules | Default cvars | Min players | Scoreboard (plus the totals) |
 | --- | --- | --- | --- | --- | --- |
@@ -10,6 +10,7 @@ Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old na
 | `zombies` ("Zombie Run") | coop | Co-op escape with weapons against AI zombies, see [Zombie Run](#zombies) | `ZOMBIES_CVARS` | 1 | Kills, Turned, Status, Ping |
 | `infected` | infected | Infected with throwing knives, see [Infected](#infected) | `INFECTED_CVARS` | 2 | Score, Kills, Streak, Deaths, Status, Ping |
 | `hns` | hns | Hide and seek with knives; found hiders become seekers, see [Hide and seek](#hide-and-seek) | `HNS_CVARS` | 2 | Role, Finds, Survived, Ping |
+| `tournament` | tournament | 1v1 duels, single elimination, spectators bet from a glass deck, see [Tournament](#tournament) | `TOURNAMENT_CVARS` | 2 | Duels won, Kills, Status, Ping |
 
 The map rotation, vote, `!rtv`, chat, spectating and lobby are the same in every mode. The rotation mixes maps of all modes, so a vote can move the lobby from a surf map to a tag map.
 
@@ -251,3 +252,39 @@ CS:GO hide and seek was never an official mode; every community server ran its o
 - No spectating while found (found hiders play on as seekers); spectating works as in every mode.
 - Map votes give hns no reserved slot (`VOTE_MAP_SLOTS` covers surf/bhop/tag/zombies); hns maps fill free slots like any map.
 
+
+## Tournament
+
+Mode id `tournament` (family `tournament`), label "Tournament". 1v1 duels in a small arena, single elimination, random seeding; everyone else watches from a glass deck above it. Server-authoritative: the shared `TournamentGame` (`packages/shared/src/modes/tournament/game.ts`, bracket in `bracket.ts`, damage in `damage.ts`, wire contract in `net.ts`) runs in `apps/server/src/modes/tournament.ts`. Maps: `kind: 'tournament'` with `MapDef.tournament` (`duelSpawns`, `arena`, `deck`, `deckSpawns`). Coins and bets: [economy.md](economy.md#tournament).
+
+### Rules
+
+| Phase | Length | What happens |
+| --- | --- | --- |
+| `waiting` | while < 2 players (`TRN_MIN_PLAYERS`) | Everyone on the deck with a knife. |
+| `starting` | 5 s (`TRN_START_SECS`) | Countdown. At its end every connected player (not spectating the lobby) is an entrant. |
+| `bracket` | 6 s (`TRN_BRACKET_SECS`) | The tree is shown before each duel; bets on that duel are open. |
+| `duel` | rounds | Per round: 3 s freeze (`TRN_FREEZE_SECS`) at `duelSpawns`, then up to 90 s live (`TRN_ROUND_SECS`), then a 3 s pause (`TRN_ROUND_END_SECS`). |
+| `ended` | 15 s (`TRN_NEXT_SECS`) | Champion shown; then a new tournament with everyone on the map, late joiners included (fewer than 2: `waiting`). |
+
+- **Bracket.** Entrants are shuffled, padded to the next power of 2 (`bracketSize`), and every bye is in round 0, at most one per match, spread over the tree by bit reversal of the match index (`byeMatches`). Match layout as in `net.ts`: round r has `size / 2^(r+1)` matches; the winner of (r, i) plays (r+1, ⌊i/2⌋), on side a when i is even. Byes are decided at once (`result: 'bye'`). Duels are played one at a time, in round then index order (`nextMatch`).
+- **Duel.** First to 2 round wins (`TRN_ROUND_WINS`), so at most 3 rounds. Every round respawns both duelists at their duel spawn with 100 HP and full magazines and reserves, holding the sniper. A kill wins the round (`reason: 'kill'`). On timeout the duelist with more HP wins it (`'time'`); equal HP replays the round under the same number (`'draw'`). Frozen duelists that move more than 48 units off their spawn are put back (`spawn` event, at most every 0.5 s); shots during the freeze and the pause are refused.
+- **Leavers.** A duelist who leaves (or spectates the lobby) loses by forfeit; the opponent advances (`result: 'forfeit'`). An entrant who leaves while waiting for a later match gives their next opponent a walkover (`'forfeit'`), when that opponent is known. A match with nobody left to play is decided with no winner, and the next match gets a walkover from it. The last entrant left is the champion. Players who join during a tournament watch from the deck until the next one.
+- **Weapons.** Duelists always carry sniper, pistol and knife (`TRN_WEAPONS`) and switch freely (`1`-`3`, `loadout`); switching has the weapon's draw time as in Infected; `R` reloads. Damage on 100 HP (`TRN_DAMAGE`, by the region of the hit capsule from `rayPlayerPart`):
+
+| Weapon | Head | Torso (neck to hips) | Arms, hands | Legs, feet |
+| --- | --- | --- | --- | --- |
+| Sniper | 100 (1 shot) | 100 (1 shot) | 50 (2 shots) | 50 (2 shots) |
+| Pistol | 100 (1 shot) | 25 (4 hits) | 25 (4 hits) | 25 (4 hits) |
+| Knife | 50 (2 hits) | 50 | 50 | 50 |
+
+- **Targets** (enforced in `TournamentGame.fire`). The two duelists of the live round hit only each other; a bullet passes through anyone else. Everyone else is a spectator: knife only, and it hits only other spectators. 3 knife hits (`TRN_DECK_KNIFE_HITS`; the `hit` event shows 66, 32, 0 HP) drop a spectator, who respawns at once at a random `deckSpawns` point (`kill` with `deck: true`, no coins). A spectator found inside the `arena` box is put back on the deck.
+- **Hits** use the Infected hitboxes and lag compensation: capsules posed on the held weapon, rewound `infRewindMs(ping)` (pose history of `INF_HISTORY_MS`), world trace for walls, knife reach 76 units with the melee line-of-sight check. Shots are void for 1 s after a state packet above `SPEED_LIMIT.tournament` (3500 u/s), which is logged.
+- **Messages.** C→S: `fire { weapon, origin, dir, tick }` (duelists: held weapon of `TRN_WEAPONS`; spectators: `knife`), `knife { origin, dir }` (a knife swing, same as `fire` with the knife), `reload`, `loadout { weapon }` (duelists only), `trnBet { pick }`. S→C: `trn { ev }` with the `TrnEvent`s of `net.ts`: `spawn` (to that player), `hit` (shooter and target), `shot` (gun tracers, to everyone but the shooter), `ammo` (to the shooter), `bet` and `betResult` (to the bettor's connections), the rest to everyone. `modeState { mode: 'tournament', ...TrnStateView }` on every change and at least once a second.
+- **Scoreboard rows.** `score` = duels won by rounds on this map, `kills` = duel kills on this map (both per account, or per player id for guests), `status` `Alive` (in the bracket), `Down` (knocked out or left) or `Spectating` (not an entrant).
+- **Stillness.** Frozen duelists are held; spectators stay active by looking around.
+
+### Known gaps
+
+- A duelist who toggles lobby spectating forfeits (the lobby stops forwarding their shots).
+- Positions are client-authoritative as in every mode; only the arena is guarded against spectators, not the deck against duelists.

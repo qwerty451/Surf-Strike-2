@@ -26,7 +26,7 @@ export function modeWorld<M extends ServerMode>(map: MapDef, make: (host: ModeHo
 			w.economy.sent(p as Body, msg);
 			s.onSend(p.id, msg);
 		},
-		broadcast: () => {},
+		broadcast: (msg) => s.onBroadcast(msg),
 		sendBinary: () => {},
 		broadcastBinary: () => {},
 		system: () => {},
@@ -39,6 +39,7 @@ export function modeWorld<M extends ServerMode>(map: MapDef, make: (host: ModeHo
 		afk,
 		mode: make(host),
 		onSend: (_id: number, _msg: ServerMessage): void => {},
+		onBroadcast: (_msg: ServerMessage): void => {},
 		/** Join the mode at a place and be active. */
 		enter(p: SimPlayer, x = p.id * 100, y = 0): SimPlayer {
 			(p as Body).ping = 0;

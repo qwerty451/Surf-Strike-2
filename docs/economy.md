@@ -34,7 +34,7 @@ Both ranges are at multiplier ×1.0. In the multiplayer modes a full lobby pays 
 
 ## Player multiplier
 
-Owner's rule. In Zombie Run, Infected, Hide and seek and Tag every award, including the cash bag, is multiplied by the number of active players on the server when it is paid. It does not apply to surf, bhop or playtime.
+Owner's rule. In Zombie Run, Infected, Hide and seek and Tag every award, including the cash bag, is multiplied by the number of active players on the server when it is paid. It does not apply to surf, bhop, the tournament or playtime.
 
 | Active players | 1–2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 and up |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -135,6 +135,23 @@ The limits beyond the first draft come from a bot simulation (2026-11-24, points
 
 The mode's own score (`+100` per kill and so on) stays as it is and only ranks players inside the round.
 
+## Tournament
+
+No minimum of active players and no player multiplier (not in `MULTIPLIER_MODES` or `MIN_ACTIVE`). Rules of the mode: [modes.md](modes.md#tournament).
+
+- **Duel kill:** 1 point to the killer (`TOURNAMENT_PAY.kill`, reason `trnKill`, "Duel kill"), paid against the victim. A normal award: counted towards the hourly backstop, refused while AFK or after a suspect speed, like every award. No repeat decay (a duel has at most 3 kills per player). Kills of spectators on the deck pay nothing. Every gun shot of a duelist counts as moving (`acted`), so holding an angle with the sniper is not AFK. Each duel is a round of the economy (`roundStart` at the duel start, `roundEnd` at its end).
+- **Champion:** `trnPrize(n)` coins (reason `trnChampion`, "Tournament champion"): 1, 2, 4, 8, 16, then 32 for n = 2, 3, 4, 5, 6, 7 and more; 0 for n < 2. **n counts the entrants who played at least one live duel round** (the freeze ended with both in the arena), players who left later included. Byes and walkovers without a round do not count, so accounts that join and forfeit cannot raise the prize. The `start` event shows `trnPrize(entrants)`, the most it can be; the `champion` event the real n and prize.
+- **Hourly limit:** `trnChampion` is `exempt` (like the first finish and the server record): one payout per tournament, never cut by the backstop and not counted towards it. Neither reason has a per-round cap or a decay. The champion award can still be refused for AFK (a champion by walkovers who stood still on the deck for 30 s), a suspect speed or an abuse pause; the server logs that.
+- **Bets** (casino-style, not awards): see below.
+
+### Tournament bets
+
+- `trnBet { pick }`: `TRN_BET` (20) coins on duelist `pick` of the current or next duel. Only with a bracket of at least 4 entrants (`TRN_BET_MIN_ENTRANTS`). Open in the `bracket` phase before the duel and during round 1's freeze; closed once round 1 goes live (a replayed round 1 does not reopen them).
+- Logged-in players only, not one of the two duelists of that match (also not another connection of a duelist's account). Eliminated entrants, late joiners and lobby spectators can bet. One bet per account and match.
+- The stake is taken at once. Settlement: a win pays 2× the stake (40), a loss 0, a forfeit, walkover or cancelled match (map change, tournament stopped) gives the stake back. Settled by account, also when the bettor is offline.
+- Replies to the bettor: `trn { ev: { e: 'bet', ok, match, pick, reason? } }`, reasons `closed`, `small`, `guest`, `duelist`, `pick`, `twice`, `coins`; and `betResult { match, outcome: won | lost | refund, payout }` (whole coins) to every connection of the account.
+- **Money path:** the casino's, not the point log. `Db.trnBetOpen` takes the stake and adds an open row to `trn_bets` (new table, additive) and a `casino_log` row `trnBet` in one transaction; `Db.trnBetClose` removes the row and credits the payout with a `casino_log` row `trnWin` or `trnRefund` (none for a loss). The Coins view shows them as "Tournament bet", "Tournament bet won", "Tournament bet refunded". No lifetime points, no backstop, no activity, not in `casino_stats` (the casino menu's net result). Bets still open when the server starts (it stopped mid-duel) are given back with a notice, as crash bets are. Rate limit: the casino's (5 per second).
+
 ## Abuse and collusion
 
 Detection must not be sensitive. Friends who play together, a bad seeker, a lucky streak or a shared IP address are normal. Nothing below bans on a single event.
@@ -145,7 +162,7 @@ Detection must not be sensitive. Friends who play together, a bad seeker, a luck
 - At most 3 connections per IP address in production, and one count per account.
 - Caps and decay as listed per mode.
 - A backstop of 250 points per rolling hour per account, counted before the multiplier, playtime included, excluding first-finish and record bonuses. What is left of it is paid. When it cuts or refuses an award, the player is told once per hour, with the minutes until more is paid.
-- Awards are rejected for 5 seconds after a horizontal speed above the mode's sanity limit, or a jump in position faster than that limit that is not a respawn by the mode, a map spawn or a teleport destination. The limits (`SPEED_LIMIT`, units/s) are well above normal play, they are not the movement caps: hide and seek 600, Infected and Zombie Run 1000, tag 3500, surf and bhop 16384 (runs are validated anyway).
+- Awards are rejected for 5 seconds after a horizontal speed above the mode's sanity limit, or a jump in position faster than that limit that is not a respawn by the mode, a map spawn or a teleport destination. The limits (`SPEED_LIMIT`, units/s) are well above normal play, they are not the movement caps: hide and seek 600, Infected and Zombie Run 1000, tag and tournament 3500, surf and bhop 16384 (runs are validated anyway).
 
 **Signals** (each adds strike weight):
 
@@ -201,6 +218,7 @@ All in the game server's SQLite, amounts in tenths. Migrations are additive: new
 | `casino_log` | `account_id`, `created_at`, `game`, `bet`, `payout`: settled casino bets, the newest 30 per account |
 | `casino_stats` | `account_id`, `plays`, `bet`, `payout`: sums of all bets ever (the net result) |
 | `casino_crash` | `id`, `account_id` (unique), `created_at`, `bet`: open crash bets |
+| `trn_bets` | `id`, `account_id`, `created_at`, `bet`: open tournament bets, whose stake is taken ([Tournament](#tournament-bets)) |
 | `point_rollup` | `account_id`, `mode`, `reason`, `entries`, `base`, `amount`: sums of deleted log rows. `point_log` keeps the newest 30 rows per account, plus those of the last 25 hours, which the limits on repeated awards count |
 | `abuse_log` | `created_at`, `account_id`, `username`, `action` (`warning`, `ban`, `exempt`), `strikes`, `evidence`; the latest 2000 rows. No IP addresses |
 
@@ -242,7 +260,8 @@ A mode calls `host.economy` (`ModeEconomy`) and nothing else. Every rule of this
 | `contact(byId, targetId)` | Call for **every** tag, find or infection, paid or not |
 | `report('shadow', [hunterId, targetId], evidence)`, `report('impossible', [playerId], evidence)` | Abuse evidence |
 | `acted(playerId)` | A verified action that counts as moving for the 30 s (Infected: a gunshot); not input for playtime |
-| `teleported(playerId)` | Only for a move that is neither a `spawn` event sent with `host.send` (`zm`, `inf`, `hns`) nor to a spawn or destination of the map |
+| `teleported(playerId)` | Only for a move that is neither a `spawn` event sent with `host.send` (`zm`, `inf`, `hns`, `trn`) nor to a spawn or destination of the map |
+| `betOpen(accountId, stake)` / `betClose(ticket, payout, outcome)` | Tournament bets: take a stake now, settle it later, online or not ([Tournament bets](#tournament-bets)); casino path, no award rules |
 
 A map session is one mode instance: from map change to map change, extensions included. Its handle stops paying afterwards. Outside a round (before the first `roundStart`) the caps of `AWARDS` run for the whole session.
 
