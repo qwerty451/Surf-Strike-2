@@ -68,7 +68,9 @@ export const RATE = {
 	chat: { limit: 2, kick: 20 },
 	json: { limit: 60, kick: 300 },
 	shop: { limit: 8, kick: 100 },
-	casino: { limit: 5, kick: 100 }
+	casino: { limit: 5, kick: 100 },
+	/** Zombie Defense actions (repair hold, shop, pads, ready, weapon swap). */
+	zd: { limit: 20, kick: 200 }
 } as const;
 
 export interface LobbyOptions {
@@ -140,7 +142,7 @@ interface Client {
 	ping: number;
 	/** Worn cosmetics (docs/economy.md#shop); the default look for guests. */
 	loadout: Loadout;
-	rate: { state: Window; chat: Window; json: Window; shop: Window; casino: Window };
+	rate: { state: Window; chat: Window; json: Window; shop: Window; casino: Window; zd: Window };
 	helloTimer: NodeJS.Timeout | null;
 	closed: boolean;
 }
@@ -440,7 +442,7 @@ export class Lobby {
 			state: null,
 			ping: 0,
 			loadout: emptyLoadout(),
-			rate: { state: new Window(), chat: new Window(), json: new Window(), shop: new Window(), casino: new Window() },
+			rate: { state: new Window(), chat: new Window(), json: new Window(), shop: new Window(), casino: new Window(), zd: new Window() },
 			helloTimer: null,
 			closed: false
 		};
@@ -574,6 +576,13 @@ export class Lobby {
 				// Zombies/infected weapons and hide-and-seek knife (docs/modes.md); the mode validates every field.
 				if (!c.spectating) this.mode.message?.(c, msg);
 				return;
+			case 'zd': {
+				// Zombie Defense actions (docs/modes.md#zombie-defense); the mode validates every field.
+				const k = c.rate.zd.hit(t);
+				if (k > RATE.zd.kick) return this.kick(c, 'action flood');
+				if (k <= RATE.zd.limit && !c.spectating) this.mode.message?.(c, msg);
+				return;
+			}
 			case 'boxOpen':
 			case 'boxRevealed':
 			case 'shopBuy':

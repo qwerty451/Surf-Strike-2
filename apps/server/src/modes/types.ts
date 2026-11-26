@@ -67,7 +67,7 @@ export interface ServerMode {
 	records(p: ModePlayer): MapRecordInfo;
 	/** `getGhost`: send the map's record ghost (race modes; others ignore it). */
 	ghost?(p: ModePlayer, map: string): void;
-	/** Mode-specific client messages (zombies: fire, reload, loadout; infected: also throwKnife, placeBeacon, callMoab); others ignore them. */
+	/** Mode-specific client messages (zombies: fire, reload, loadout; infected: also throwKnife, placeBeacon, callMoab; defense: fire, reload, zd); others ignore them. */
 	message?(p: ModePlayer, msg: ModeClientMessage): void;
 	/** Chat command for this mode (!top, !pb); return false if not handled. */
 	command(p: ModePlayer, cmd: Command): boolean;
@@ -84,7 +84,7 @@ export interface ServerMode {
 }
 
 /** Client messages the lobby forwards to the mode as they are. */
-export type ModeClientMessage = Extract<ClientMessage, { type: 'fire' | 'reload' | 'loadout' | 'throwKnife' | 'placeBeacon' | 'callMoab' | 'knife' }>;
+export type ModeClientMessage = Extract<ClientMessage, { type: 'fire' | 'reload' | 'loadout' | 'throwKnife' | 'placeBeacon' | 'callMoab' | 'knife' | 'zd' }>;
 
 export const EMPTY_RECORDS: MapRecordInfo = Object.freeze({
 	pbTicks: null,

@@ -1,7 +1,7 @@
 /** Shared helpers for server tests (node --test). Not a test file itself. */
 import { WebSocket } from 'ws';
-import type { GhostFrame, MapDef, NetState, ServerMessage, SnapshotEntry, ZombieFrame } from '@surf/shared';
-import { BIN_ZOMBIES, decodeGhostFrame, decodeSnapshot, decodeZombies, encodeState, Status } from '@surf/shared';
+import type { DefenseFrame, GhostFrame, MapDef, NetState, ServerMessage, SnapshotEntry, ZombieFrame } from '@surf/shared';
+import { BIN_DEFENSE, BIN_ZOMBIES, decodeDefense, decodeGhostFrame, decodeSnapshot, decodeZombies, encodeState, Status } from '@surf/shared';
 
 /** Staged corridor along +X: start [0,200], stage 2 [1000,1100], end [2000,2100]. */
 export function testMap(id = 'surf_test', title = 'Test'): MapDef {
@@ -72,6 +72,8 @@ export class TestClient {
 	readonly ghosts: GhostFrame[] = [];
 	/** BIN_ZOMBIES frames received (zombies maps). */
 	readonly zombieFrames: ZombieFrame[] = [];
+	/** BIN_DEFENSE frames received (Zombie Defense maps). */
+	readonly defenseFrames: DefenseFrame[] = [];
 	closed = false;
 	closeCode = 0;
 	private waiters: Array<() => void> = [];
@@ -83,6 +85,9 @@ export class TestClient {
 			if (isBinary && new Uint8Array(data as ArrayBuffer)[0] === BIN_ZOMBIES) {
 				const zf = decodeZombies(data as ArrayBuffer);
 				if (zf) this.zombieFrames.push(zf);
+			} else if (isBinary && new Uint8Array(data as ArrayBuffer)[0] === BIN_DEFENSE) {
+				const df = decodeDefense(data as ArrayBuffer);
+				if (df) this.defenseFrames.push(df);
 			} else if (isBinary) {
 				const snap = decodeSnapshot(data as ArrayBuffer);
 				if (snap) this.snapshots.push(snap);
