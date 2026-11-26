@@ -2,12 +2,21 @@
  * Race gamemodes (surf, bhop): client-run timer and zones, server run
  * validation, personal bests and the per-map leaderboard (docs/gameplay.md).
  */
-import { deflateRawSync } from 'node:zlib';
+import { promisify } from 'node:util';
+import { deflateRaw } from 'node:zlib';
 import type { GameModeId, GhostTrack, MapRecordInfo, NetState, ScoreRow, ServerMessage } from '@surf/shared';
 import { decayed, encodeGhostFrame, formatTicks, GhostRecorder, packGhost, RACE_PAY, raceFinish, RECORDS_TOP, REPEAT_MS, sanitizeLoadout, Status } from '@surf/shared';
+import type { Db } from '../db.ts';
 import type { Command } from '../commands.ts';
 import { RunValidator } from '../validation.ts';
 import type { ModeHost, ModePlayer, ServerMode, ZoneKind } from './types.ts';
+
+const deflate = promisify(deflateRaw);
+const replayQueues = new WeakMap<Db, Map<string, Promise<void>>>();
+
+export async function flushRaceReplays(db: Db): Promise<void> {
+	await Promise.all(replayQueues.get(db)?.values() ?? []);
+}
 
 export class RaceMode implements ServerMode {
 	readonly id: GameModeId;
@@ -76,16 +85,32 @@ export class RaceMode implements ServerMode {
 		return this.ghostFrame;
 	}
 
-	/** A validated account run: keep its replay when it beats the map's ghost, and push it to everyone. */
-	private saveGhost(p: ModePlayer, accountId: number, ticks: number, track: GhostTrack): void {
+	/** Save in finish order per map, including across rotations. */
+	private saveGhostAsync(name: string, accountId: number, ticks: number, track: GhostTrack): void {
 		const h = this.host;
-		const data = deflateRawSync(packGhost(track), { level: 9 });
-		if (!h.db.saveReplay(h.map.id, accountId, ticks, track.length, data, Date.now())) return;
+		const mapId = h.map.id;
+		let queue = replayQueues.get(h.db);
+		if (!queue) replayQueues.set(h.db, queue = new Map());
+		const saved = (queue.get(mapId) ?? Promise.resolve()).then(async () => {
+			const existing = h.db.getReplay(mapId);
+			if (existing && existing.ticks <= ticks) return;
+			const data = await deflate(packGhost(track), { level: 6 });
+			if (h.db.saveReplay(mapId, accountId, ticks, track.length, data, Date.now())) {
+				h.replaySaved?.(mapId);
+				h.log(`ghost ${mapId} ${name} ${formatTicks(ticks)} ${track.length} samples ${data.length} B`);
+			}
+		}).catch((err: Error) => h.log(`ghost save error ${mapId} ${name}: ${err.message}`));
+		queue.set(mapId, saved);
+		void saved.then(() => {
+			if (queue.get(mapId) === saved) queue.delete(mapId);
+		});
+	}
+
+	replayChanged(): void {
 		this.ghostFrame = undefined;
-		h.broadcastBinary(this.loadGhostFrame());
+		this.host.broadcastBinary(this.loadGhostFrame());
 		const look = this.ghostLook();
-		if (look) h.broadcast(look);
-		h.log(`ghost ${h.map.id} ${p.name} ${formatTicks(ticks)} ${track.length} samples ${data.length} B`);
+		if (look) this.host.broadcast(look);
 	}
 
 	zone(p: ModePlayer, kind: ZoneKind, index: number, tick: number): void {
@@ -112,14 +137,13 @@ export class RaceMode implements ServerMode {
 			h.economy.award(p.id, raceFinish(map), 'raceFinish'); // shows the login hint
 			return;
 		}
-		if (track) this.saveGhost(p, p.accountId, verdict.ticks, track);
 		const prevRecord = h.db.top(map.id, 1)[0] ?? null;
 		const firstEver = h.db.getPb(p.accountId, map.id) === null;
 		const saved = h.db.saveRun(p.accountId, map.id, verdict.ticks, verdict.splits, Date.now());
 		if (saved.pb) this.ranksCache = null;
 		const record = saved.pb && (!prevRecord || verdict.ticks < prevRecord.ticks);
 		const rank = h.db.rankFor(map.id, verdict.ticks);
-		h.send(p, {
+		const resultMsg: ServerMessage = {
 			type: 'runResult',
 			ticks: verdict.ticks,
 			rank,
@@ -127,7 +151,12 @@ export class RaceMode implements ServerMode {
 			record,
 			splits: verdict.splits,
 			records: this.records(p)
-		});
+		};
+		h.send(p, resultMsg);
+		const existingReplay = track ? h.db.getReplay(map.id) : null;
+		if (track && (!existingReplay || verdict.ticks < existingReplay.ticks)) {
+			this.saveGhostAsync(p.name, p.accountId, verdict.ticks, track);
+		}
 		// The leaderboard changed: everyone else's map record and own rank may be stale.
 		if (saved.pb) this.pushRecords(p);
 		if (record) {

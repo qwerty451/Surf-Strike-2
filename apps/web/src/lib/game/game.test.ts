@@ -3,7 +3,7 @@
  * ClientMode and stubs for the renderer, sound, input and network. The modes
  * have tests of their own.
  */
-import { buildCollisionWorld, decodeState, getMap, Status, type ClientMessage, type CollisionWorld, type PlayerState, type ServerMessage } from '@surf/shared';
+import { buildCollisionWorld, clampRenderTime, decodeState, getMap, PROTOCOL_VERSION, Status, withTeleportSeq, ZM_HISTORY_MS, type ClientMessage, type CollisionWorld, type PlayerState, type ServerMessage } from '@surf/shared';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClientMode, ClientModeHost } from './modes/types.js';
 
@@ -87,7 +87,7 @@ vi.mock('../net/connection.js', () => ({
 			return true;
 		}
 		disconnect(): void {}
-		holdOff(): void {}
+		holdOff = vi.fn();
 		dispose(): void {}
 	}
 }));
@@ -118,17 +118,21 @@ vi.mock('./modes/index.js', () => ({
 	}
 }));
 
+import { MAX_EXTRAP_DISTANCE } from '../net/interp.js';
 import { Game } from './game.js';
+import { memoryStore, type KeyValueStore } from './storage.js';
 
 /** The private members the tests look at. */
 interface Inside {
 	frame(now: number): void;
 	player: PlayerState;
 	yaw: number;
+	store: KeyValueStore;
 }
 interface Handlers {
+	open(client: { send(m: ClientMessage): void }, scope: string | null): void;
 	message(m: ServerMessage): void;
-	snapshot(entries: object[], arrival: number): void;
+	snapshot(frame: { seq: number; serverTimeMs: number; entries: object[] }, arrival: number): void;
 	closed(wasOpen: boolean, url: string, code: number): void;
 }
 
@@ -153,22 +157,30 @@ function setup() {
 	const conn = T.conn as Handlers;
 	const sent: ClientMessage[] = [];
 	const states: ArrayBuffer[] = [];
+	let snapSeq = 0;
 	return {
 		game, inside, conn, sent, states,
 		frames(n: number): void {
 			for (let i = 0; i < n; i++) inside.frame((clock += 15.625));
 		},
 		/** Connected as player 7, with players 2 and 3. */
-		online(): void {
-			(T.connection as { client: unknown }).client = { url: 'x', send: (m: ClientMessage) => sent.push(m), sendBinary: (b: ArrayBuffer) => states.push(b), close: () => {} };
+		online(version: number | null = PROTOCOL_VERSION, map = 'tag_quayside'): void {
+			(T.connection as { client: unknown }).client = { url: 'x', send: (m: ClientMessage) => sent.push(m), sendBinary: (b: ArrayBuffer) => states.push(b), close: (code = 0) => conn.closed(true, 'x', code) };
 			conn.message({
-				type: 'welcome', selfId: 7, map: 'tag_quayside', mode: 'tag', mapTimeLeft: 60, cvars: {}, account: null,
+				type: 'welcome', ...(version === null ? {} : { version }), selfId: 7, map, mode: getMap(map)!.kind, mapTimeLeft: 60, cvars: {}, account: null,
 				players: [2, 3].map((id) => ({ id, name: `P${id}`, spectating: false })),
 				records: { pbTicks: null, pbSplits: null, rank: null, recordTicks: null, recordName: null }
 			} as unknown as ServerMessage);
 		},
 		snapshot(): void {
-			conn.snapshot([2, 3].map((id) => ({ id, tick: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, pitch: 0, yaw: 0, flags: 0, status: Status.Runner, stage: 0, runTicks: 0 })), clock);
+			conn.snapshot(
+				{
+					seq: ++snapSeq,
+					serverTimeMs: clock,
+					entries: [2, 3].map((id) => ({ id, tick: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, pitch: 0, yaw: 0, flags: 0, status: Status.Runner, stage: 0, runTicks: 0 }))
+				},
+				clock
+			);
 		}
 	};
 }
@@ -179,6 +191,48 @@ beforeEach(() => {
 	T.next = {};
 	T.construct = null;
 	T.mouse = { dx: 0, dy: 0 };
+});
+
+it.each([null, 1, 2])('stays solo and backs off on a welcome with version %s', (version) => {
+	const { game, online, sent } = setup();
+	online(version);
+	expect(game.hud.online).toBe(false);
+	expect(sent).toEqual([]);
+	expect(game.hud.chat.at(-1)?.text).toMatch(/server runs a different version.*reload.*wait/i);
+	expect((T.connection as { holdOff: ReturnType<typeof vi.fn> }).holdOff).toHaveBeenCalledWith(60_000);
+	game.destroy();
+});
+
+it('acknowledges each delivery of the applied spawn and applies it once', () => {
+	const { game, conn, online, sent } = setup();
+	online();
+	const spawn = { type: 'zm', ev: { e: 'spawn', id: 7 }, spawnSeq: 2 } as Extract<ServerMessage, { type: 'zm' }>;
+	conn.message(spawn);
+	conn.message(spawn);
+	conn.message({ ...spawn, spawnSeq: 1 });
+	expect(mode().calls.filter(([name]) => name === 'message')).toHaveLength(1);
+	expect(sent.slice(1)).toEqual([{ type: 'spawnAck', seq: 2 }, { type: 'spawnAck', seq: 2 }]);
+	game.destroy();
+});
+
+it('sends a login token in hello only for its identified session scope', () => {
+	const { inside, conn, online } = setup();
+	inside.store = memoryStore({
+		'surf.session:discovery:/api/server': JSON.stringify({ token: 'legacy-token', username: 'Player' })
+	});
+	const send = vi.fn();
+	const first = 'discovery:/api/server:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+	const second = 'discovery:/api/server:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+	conn.open({ send }, first);
+	expect(send.mock.lastCall?.[0]).not.toHaveProperty('token');
+	online();
+	conn.message({ type: 'auth', ok: true, username: 'Player', token: 'new-token' });
+	conn.open({ send }, second);
+	expect(send.mock.lastCall?.[0]).not.toHaveProperty('token');
+	conn.open({ send }, first);
+	expect(send.mock.lastCall?.[0]).toMatchObject({ type: 'hello', token: 'new-token' });
+	conn.open({ send }, null);
+	expect(send.mock.lastCall?.[0]).not.toHaveProperty('token');
 });
 
 describe('the mode of a map', () => {
@@ -259,6 +313,120 @@ describe('a tick', () => {
 		s.frames(1);
 		expect(audio().update).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ active: true }));
 	});
+});
+
+const combatPose = { tick: 1, x: 0, y: 0, z: 512, vx: 1000, vy: 0, vz: 0, pitch: 0, yaw: 0, flags: 0, status: Status.Running, stage: 0, runTicks: 0 };
+
+it('draws the confirmed combat position immediately after a large predicted overshoot', () => {
+	const s = setup();
+	s.online(PROTOCOL_VERSION, 'zombies_lowtide');
+	const host = mode().host;
+	host.setWorld(buildCollisionWorld({ brushes: [] }));
+	const at = clock;
+	s.conn.snapshot({ seq: 1, serverTimeMs: at, entries: [{ ...combatPose, id: 2, sampleTimeMs: at }] }, clock);
+	for (let seq = 2; seq <= 6; seq++) {
+		s.frames(2);
+		s.conn.snapshot({ seq, serverTimeMs: clock, entries: [] }, clock);
+	}
+	const remote = host.remotes.get(2)!;
+	expect(remote.sample.x).toBe(MAX_EXTRAP_DISTANCE);
+	s.conn.snapshot({ seq: 7, serverTimeMs: clock, entries: [
+		{ ...combatPose, id: 2, tick: 7, x: 20, vx: 0, sampleTimeMs: at + 100 }
+	] }, clock);
+	let maxGap = 0;
+	for (let frame = 0; frame < 6; frame++) {
+		s.frames(1);
+		maxGap = Math.max(maxGap, Math.abs(remote.sample.x - 20));
+	}
+	expect(maxGap).toBe(0);
+	s.game.destroy();
+});
+
+it('keeps another combat player past their teleport when a late stop shortens a prediction', () => {
+	const s = setup();
+	s.online(PROTOCOL_VERSION, 'zombies_lowtide');
+	const host = mode().host;
+	host.setWorld(buildCollisionWorld({ brushes: [] }));
+	mode().isDown = () => false;
+	const at = clock;
+	const publish = (seq: number, entries: object[]) => s.conn.snapshot({ seq, serverTimeMs: clock, entries }, clock);
+	const other = { ...combatPose, id: 3, vx: 0 };
+	publish(1, [{ ...combatPose, id: 2, sampleTimeMs: at }, { ...other, sampleTimeMs: at }]);
+	s.frames(2);
+	publish(2, []);
+	s.frames(2);
+	const teleported = { ...other, x: 400, flags: withTeleportSeq(0, 1) };
+	publish(3, [{ ...teleported, tick: 5, sampleTimeMs: clock }]);
+	s.frames(2);
+	publish(4, [{ ...teleported, tick: 7, sampleTimeMs: clock }]);
+	s.frames(2);
+	publish(5, []);
+	s.frames(2);
+	const beforeStop = host.renderServerTimeMs;
+	expect(host.remotes.get(3)?.sample.x).toBe(400);
+
+	publish(6, [{ ...combatPose, id: 2, tick: 3, x: 20, vx: 0, sampleTimeMs: at + 31.25 }]);
+	s.frames(1);
+	expect(host.renderServerTimeMs).toBeGreaterThan(beforeStop);
+	expect(host.remotes.get(2)?.sample.x).toBe(20);
+	expect(host.remotes.get(3)?.sample.x).toBe(400);
+	s.game.destroy();
+});
+
+it('reports the held combat pose while other targets keep playing', () => {
+	const s = setup();
+	s.online(PROTOCOL_VERSION, 'zombies_lowtide');
+	mode().host.setWorld(buildCollisionWorld({ brushes: [] }));
+	mode().isDown = () => false;
+	const at = clock;
+	s.conn.snapshot({ seq: 1, serverTimeMs: at, entries: [
+		{ ...combatPose, id: 2, sampleTimeMs: at },
+		{ ...combatPose, id: 3, sampleTimeMs: at }
+	] }, clock);
+	s.frames(16);
+	s.conn.snapshot({ seq: 2, serverTimeMs: clock, entries: [
+		{ ...combatPose, id: 3, tick: 16, x: clock - at, sampleTimeMs: clock }
+	] }, clock);
+	s.frames(2);
+	const host = mode().host;
+	const held = at + MAX_EXTRAP_DISTANCE;
+	expect(host.remotes.get(2)?.sample.x).toBeCloseTo(MAX_EXTRAP_DISTANCE);
+	expect(host.remotes.get(3)?.sample.x).toBeCloseTo(host.renderServerTimeMs - at);
+	expect(host.renderServerTimeMs).toBeGreaterThan(held);
+	expect(decodeState(s.states.at(-1)!)?.renderServerTimeMs).toBe(held);
+	host.send({ type: 'knife', origin: { x: 0, y: 0, z: 0 }, dir: { x: 1, y: 0, z: 0 } });
+	expect(s.sent.at(-1)).toMatchObject({ type: 'knife', renderServerTimeMs: held });
+	s.game.destroy();
+});
+
+it.each([
+	{ rtt: 40, ms: 272 },
+	{ rtt: 220, ms: 382 }
+])('bounds stale state and attack claims to $ms ms at $rtt ms RTT', ({ rtt, ms }) => {
+	const s = setup();
+	s.online(PROTOCOL_VERSION, 'zombies_lowtide');
+	const host = mode().host;
+	host.setWorld(buildCollisionWorld({ brushes: [] }));
+	const downlink = rtt / 2;
+	const at = clock - downlink;
+	s.conn.message({ type: 'pong', t: clock - rtt, serverTime: at });
+	s.conn.snapshot({ seq: 1, serverTimeMs: at, entries: [{ ...combatPose, id: 2, sampleTimeMs: at }] }, clock);
+	s.frames(22);
+	for (const frames of [2, 32]) {
+		s.frames(frames);
+		const receivedAt = clock + rtt - downlink;
+		const oldest = receivedAt - ms;
+		const held = host.remotes.get(2)!;
+		expect(held.sample.x).toBe(MAX_EXTRAP_DISTANCE);
+		expect(at + MAX_EXTRAP_DISTANCE).toBeLessThan(oldest);
+		const stateClaim = decodeState(s.states.at(-1)!)?.renderServerTimeMs;
+		expect(stateClaim).toBe(oldest);
+		host.send({ type: 'knife', origin: { x: 0, y: 0, z: 0 }, dir: { x: 1, y: 0, z: 0 } });
+		const attack = s.sent.at(-1);
+		expect(attack).toMatchObject({ type: 'knife', renderServerTimeMs: oldest });
+		expect(clampRenderTime(stateClaim!, receivedAt, Math.min(rtt, 150), ZM_HISTORY_MS)).toBe(oldest);
+	}
+	s.game.destroy();
 });
 
 describe('spectating', () => {

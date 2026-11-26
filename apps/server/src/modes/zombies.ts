@@ -4,18 +4,20 @@
  * lag-compensated hits, player health) runs here on the latest state packets;
  * clients send `fire`/`reload`/`loadout` and display the results.
  */
-import type { MapRecordInfo, NetState, ScoreRow, ServerMessage, ZmEvent } from '@surf/shared';
+import type { MapRecordInfo, NetState, ScoreRow, ServerMessage, SnapshotEntry, ZmEvent } from '@surf/shared';
 import {
 	buildCollisionWorld,
 	decayed,
 	encodeZombies,
 	FLAG_DUCKED,
+	FLAG_TELEPORTED,
 	mapCvars,
 	REPEAT_MS,
 	Status,
 	WEAPONS,
 	WEAPON_IDS,
 	ZombiesGame,
+	ZM_HISTORY_MS,
 	ZOMBIE_HP,
 	ZOMBIES_PAY,
 	zmEventRoute,
@@ -24,7 +26,7 @@ import {
 } from '@surf/shared';
 import type { Command } from '../commands.ts';
 import type { ModeClientMessage, ModeHost, ModePlayer, ServerMode } from './types.ts';
-import { EMPTY_RECORDS } from './types.ts';
+import { EMPTY_RECORDS, renderRewindMs } from './types.ts';
 
 /** Mode state is re-sent at least this often (ms), and at most this often on changes. */
 export const ZM_STATE_MS = 1000;
@@ -32,6 +34,11 @@ export const ZM_STATE_MIN_MS = 250;
 
 export type ZombiesModeOptions = Pick<ZombiesGameOptions, 'countdownSecs' | 'endSecs' | 'maxZombies' | 'spawnIntervalScale'>;
 
+
+interface ZombieFrameTime {
+	tick: number;
+	at: number;
+}
 
 const LOADOUT_HINT = WEAPON_IDS.map((w) => `${WEAPONS[w].slot} ${WEAPONS[w].label}`).join(' · ');
 
@@ -46,6 +53,7 @@ export class ZombiesMode implements ServerMode {
 	readonly game: ZombiesGame;
 	private lastSent = -Infinity;
 	private dirty = true;
+	private readonly zombieFrameTimes: ZombieFrameTime[] = [];
 
 	constructor(
 		private readonly host: ModeHost,
@@ -59,7 +67,8 @@ export class ZombiesMode implements ServerMode {
 			cvars: mapCvars(map),
 			now: host.now(),
 			rng: () => host.rng(),
-			lenient: true
+			lenient: true,
+			relayedPlayerHistory: true
 		});
 	}
 
@@ -81,7 +90,11 @@ export class ZombiesMode implements ServerMode {
 	}
 
 	state(p: ModePlayer, s: NetState): void {
-		this.game.setPlayerPos(p.id, { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0, yaw: s.yaw });
+		this.game.setPlayerPos(p.id, { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0, yaw: s.yaw }, (s.flags & FLAG_TELEPORTED) !== 0);
+	}
+
+	snapshot(entries: readonly SnapshotEntry[]): void {
+		this.game.recordPlayerSnapshot(entries);
 	}
 
 	zone(): void {}
@@ -96,7 +109,9 @@ export class ZombiesMode implements ServerMode {
 		const now = this.host.now();
 		switch (msg.type) {
 			case 'fire': {
-				const res = this.game.fire(p.id, { weapon: msg.weapon, origin: msg.origin, dir: msg.dir, tick: Number(msg.tick) }, now);
+				const serverNow = this.host.serverNow?.() ?? now;
+				const timing = this.shotTiming(msg, serverNow, p);
+				const res = this.game.fire(p.id, { weapon: msg.weapon, origin: msg.origin, dir: msg.dir, ...timing }, now);
 				this.dispatch(res.events);
 				return;
 			}
@@ -108,6 +123,30 @@ export class ZombiesMode implements ServerMode {
 				this.dirty = true;
 				return;
 		}
+	}
+
+	private shotTiming(msg: Extract<ModeClientMessage, { type: 'fire' }>, now: number, p: ModePlayer): { tick: number; playerRenderTime: number } {
+		const requested = Number.isFinite(msg.tick) ? this.zombieFrameValue('tick', msg.tick) : undefined;
+		const rewind = renderRewindMs(msg.renderServerTimeMs, now, p, ZM_HISTORY_MS, now - (requested ?? now));
+		const playerRenderTime = now - rewind;
+		const tick = rewind === 0 ? this.game.tick : this.zombieFrameValue('at', playerRenderTime) ?? this.game.tick;
+		return { tick, playerRenderTime };
+	}
+
+	/** Interpolate between actual BIN_ZOMBIES send times and their fractional sim ticks. */
+	private zombieFrameValue(key: keyof ZombieFrameTime, value: number): number | undefined {
+		const other = key === 'tick' ? 'at' : 'tick';
+		const frames = this.zombieFrameTimes;
+		const first = frames[0];
+		if (!first || value <= first[key]) return first?.[other];
+		for (let i = 1; i < frames.length; i++) {
+			const b = frames[i]!;
+			if (b[key] < value) continue;
+			const a = frames[i - 1]!;
+			const f = (value - a[key]) / (b[key] - a[key]);
+			return a[other] + (b[other] - a[other]) * f;
+		}
+		return frames.at(-1)?.[other];
 	}
 
 	command(p: ModePlayer, cmd: Command): boolean {
@@ -159,15 +198,20 @@ export class ZombiesMode implements ServerMode {
 	}
 
 	/** BIN_ZOMBIES snapshot (every mode tick, 32 Hz; droppable under backlog like player snapshots). */
-	sendZombies(): void {
+	sendZombies(now = this.host.serverNow?.() ?? this.host.now()): void {
 		const g = this.game;
 		if (g.zombies.size === 0 && g.phase !== 'playing' && g.phase !== 'ended') return;
+		const times = this.zombieFrameTimes;
+		if (times.at(-1)?.tick !== g.tick) {
+			times.push({ tick: g.tick, at: now });
+			while (times.length > 2 && times[1]!.at < now - ZM_HISTORY_MS) times.shift();
+		}
 		const list: ZombieNet[] = [];
 		for (const z of g.zombies.values()) {
 			const o = z.body.origin;
 			list.push({ id: z.id, x: o.x, y: o.y, z: o.z, yaw: z.yaw, flags: g.zombieFlags(z), hp: Math.max(0, z.hp) / ZOMBIE_HP });
 		}
-		this.host.broadcastBinary(encodeZombies(g.tick, list), true);
+		this.host.broadcastBinary(encodeZombies(g.tick, list, now), true);
 	}
 
 	stateMessage(): Extract<ServerMessage, { type: 'modeState' }> {
@@ -191,7 +235,7 @@ export class ZombiesMode implements ServerMode {
 			if (route.to !== undefined) {
 				for (const p of h.players()) if (p.id === route.to) h.send(p, msg);
 			} else if (route.except !== undefined) {
-				for (const p of h.players()) if (p.id !== route.except) h.send(p, msg);
+				h.broadcast(msg, route.except);
 			} else h.broadcast(msg);
 			this.announce(ev);
 		}

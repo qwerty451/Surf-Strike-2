@@ -3,17 +3,22 @@
  * `TagGame` rules run here on the latest state packets of every
  * non-spectating player; clients only display the result.
  */
-import type { MapRecordInfo, ScoreRow, ServerMessage, TagEvent, TagPos } from '@surf/shared';
+import type { MapRecordInfo, NetState, ScoreRow, ServerMessage, TagEvent, TagPos } from '@surf/shared';
 import {
 	buildSight,
 	FLAG_DUCKED,
+	FLAG_TELEPORTED,
 	HUNT_RANGE,
 	HuntTracker,
+	mapCvars,
+	MAX_VELOCITY_HARD,
 	Status,
+	TAG_MAX_SWEEP_MS,
 	TAG_PAY,
 	TAG_PODIUM,
 	TagGame,
 	tagPlacements,
+	TICK_RATE,
 	TimeMeter,
 	type HuntBody,
 	type TagGameOptions,
@@ -41,6 +46,9 @@ export class TagMode implements ServerMode {
 	readonly id = 'tag' as const;
 	readonly game: TagGame;
 	private lastSent = -Infinity;
+	private readonly discontinuous = new Set<number>();
+	private readonly poses = new Map<number, { state: NetState; at: number }>();
+	private readonly maxVelocity: number;
 	/** Chases of the running round (docs/economy.md#chase-and-view). */
 	private readonly hunt: HuntTracker;
 	/** By playerId: an id can go to someone else. */
@@ -56,8 +64,10 @@ export class TagMode implements ServerMode {
 		private readonly host: ModeHost,
 		opts: TagModeOptions = {}
 	) {
-		this.game = new TagGame({ ...opts, now: host.now(), rng: () => host.rng() });
-		this.hunt = new HuntTracker({ sight: buildSight(host.map), chaseRange: HUNT_RANGE.tagChase });
+		const sight = buildSight(host.map);
+		this.game = new TagGame({ ...opts, now: host.now(), rng: () => host.rng(), clearLine: sight.clear });
+		this.hunt = new HuntTracker({ sight, chaseRange: HUNT_RANGE.tagChase });
+		this.maxVelocity = Math.min(mapCvars(host.map).sv_maxvelocity, MAX_VELOCITY_HARD);
 	}
 
 	join(p: ModePlayer): void {
@@ -66,15 +76,29 @@ export class TagMode implements ServerMode {
 		this.host.systemTo(p, 'Tag: whoever is IT tags someone by touching them. Score = seconds you are not IT.');
 	}
 
-	leave(): void {
+	leave(p: ModePlayer): void {
+		this.poses.delete(p.id);
 		this.tick();
 	}
 
-	spectate(): void {
+	spectate(p: ModePlayer): void {
+		this.poses.delete(p.id);
 		this.tick();
 	}
 
-	state(): void {}
+	state(p: ModePlayer, s: NetState): void {
+		const now = this.host.now();
+		const before = this.poses.get(p.id);
+		if (s.flags & FLAG_TELEPORTED) this.discontinuous.add(p.id);
+		if (before) {
+			const gap = now - before.at;
+			const distance = Math.max(Math.abs(s.x - before.state.x), Math.abs(s.y - before.state.y), Math.abs(s.z - before.state.z));
+			// Packets may arrive together. Allow a movement tick plus the clock resolution of the receipt times.
+			const travel = (this.maxVelocity * Math.max(1000 / TICK_RATE, gap)) / 1000 + 8;
+			if (distance > 0 && (gap > TAG_MAX_SWEEP_MS || distance > travel)) this.discontinuous.add(p.id);
+		}
+		this.poses.set(p.id, { state: s, at: now });
+	}
 
 	zone(): void {}
 
@@ -118,9 +142,12 @@ export class TagMode implements ServerMode {
 			if (p.spectating) continue;
 			playing.set(p.id, p);
 			const s = p.state;
+			const pose = this.poses.get(p.id);
+			if (s && (!pose || now - pose.at > TAG_MAX_SWEEP_MS)) this.discontinuous.add(p.id);
 			active.set(p.id, s ? { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0 } : null);
 		}
-		const events = this.game.update(now, active);
+		const events = this.game.update(now, active, this.discontinuous);
+		this.discontinuous.clear();
 		// Leaving or spectating ends "played from the start", also when coming back.
 		for (const [id, key] of this.starters) if (playing.get(id)?.playerId !== key) this.starters.delete(id);
 		for (const e of events) {

@@ -7,8 +7,9 @@
 		"dev": "tsx watch src/index.ts",
 		"start": "tsx src/index.ts",
 		"host": "tsx src/host.ts",
+		"build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node24 --external:better-sqlite3 --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\" --outfile=dist/server.mjs",
 		"check": "tsc --noEmit",
-		"test": "node --import tsx --test src/*.test.ts ../../tools/dev-launch.test.ts"
+		"test": "node --import tsx --test src/*.test.ts ../../tools/dev-launch.test.ts ../../tools/image-tags.test.mjs"
 	},
 	"dependencies": {
 		"@surf/shared": "workspace:*",
@@ -19,6 +20,7 @@
 		"@types/better-sqlite3": "^9.6.0",
 		"@types/node": "^24.0.0",
 		"@types/ws": "^8.18.2",
+		"esbuild": "^0.28.2",
 		"tsx": "^4.23.15",
 		"typescript": "^6.0.3"
 	}

@@ -1,9 +1,7 @@
 /**
  * Zombie interpolation (docs/modes.md#zombies): BIN_ZOMBIES frames are kept
- * with their arrival time and sampled INTERP_DELAY_MS in the past, like
- * remote players. A zombie present in only one of the two bracketing frames
- * is drawn at that frame's pose. The sampled sim tick is sent with shots for
- * lag compensation.
+ * on the server timeline and sampled at the same render time as remote
+ * players. A zombie present in one bracketing frame uses that frame's pose.
  */
 import type { ZombieFrame, ZombieNet } from '@surf/shared';
 import { lerpAngle } from './interp.js';
@@ -26,10 +24,11 @@ export class ZombieBuffer {
 	tick = 0;
 
 	push(frame: ZombieFrame, arrivalMs: number): void {
+		let at = frame.serverTimeMs ?? arrivalMs;
 		const last = this.buf[this.buf.length - 1];
 		if (last && frame.tick <= last.tick) return; // late or duplicate frame
-		if (last && arrivalMs < last.t) arrivalMs = last.t;
-		this.buf.push({ t: arrivalMs, tick: frame.tick, byId: new Map(frame.zombies.map((z) => [z.id, z])) });
+		if (last && at < last.t) at = last.t;
+		this.buf.push({ t: at, tick: frame.tick, byId: new Map(frame.zombies.map((z) => [z.id, z])) });
 		if (this.buf.length > CAPACITY) this.buf.shift();
 	}
 

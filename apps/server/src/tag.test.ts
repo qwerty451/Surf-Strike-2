@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import type { MapDef, ServerMessage } from '@surf/shared';
-import { Status, TAG_IMMUNITY_SECS, TAG_INTERMISSION_SECS, TAG_ROUND_SECS } from '@surf/shared';
+import { FLAG_TELEPORTED, Status, TAG_IMMUNITY_SECS, TAG_INTERMISSION_SECS, TAG_MAX_SWEEP_MS, TAG_ROUND_SECS, withTeleportSeq } from '@surf/shared';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
 import { netState, sleep, TestClient, testMap } from './test-helpers.ts';
@@ -16,7 +16,10 @@ function tagMap(): MapDef {
 		layout: 'open',
 		cvars: {},
 		spawns: Array.from({ length: 8 }, (_, i) => ({ pos: { x: i * 200, y: 0, z: 0 }, yaw: 0 })),
-		zones: [{ type: 'teleport', min: { x: -5000, y: -5000, z: -1000 }, max: { x: 5000, y: 5000, z: -100 }, to: 'start' }]
+		zones: [
+			{ type: 'teleport', min: { x: -5000, y: -5000, z: -1000 }, max: { x: 5000, y: 5000, z: -100 }, to: 'start' },
+			{ type: 'teleport', min: { x: -60, y: 490, z: 0 }, max: { x: -40, y: 510, z: 80 }, to: 'start', dest: { pos: { x: 49, y: 500, z: 0 }, yaw: 0 } }
+		]
 	};
 }
 
@@ -35,11 +38,10 @@ async function join(name: string) {
 const settle = () => sleep(40);
 
 /** Send a position and wait until the server has stored it. */
-async function moveTo(c: TestClient, x: number, y = 0, z = 0) {
-	let tick = 0;
+async function moveTo(c: TestClient, x: number, y = 0, z = 0, flags = 0) {
 	const id = c.of('welcome')[0]!.selfId;
 	const stored = () => [...server.lobby.clients].find((o) => o.id === id)?.state;
-	c.sendState(netState(++tick, x, { y, z, status: Status.Idle }));
+	c.sendState(netState(1, x, { y, z, flags, status: Status.Idle }));
 	const deadline = Date.now() + 2000;
 	while (!(stored()?.x === x && stored()?.y === y && stored()?.z === z)) {
 		if (Date.now() > deadline) throw new Error('state not stored');
@@ -146,6 +148,19 @@ describe('tag mode', () => {
 		await moveTo(b, 2000);
 	});
 
+	it('remembers a teleport even if another state packet arrives before the tag check', async () => {
+		clock += 100;
+		await moveTo(a, 0, 500);
+		await moveTo(b, -50, 500);
+		await tick(a);
+		clock += 15.625;
+		await moveTo(b, 49, 500, 0, withTeleportSeq(0, 4));
+		assert.ok([...server.lobby.clients].find((p) => p.id === bId)!.state!.flags & FLAG_TELEPORTED);
+		clock += 15.625;
+		await moveTo(b, 50, 500);
+		assert.deepEqual((await tick(a)).it, [aId]);
+	});
+
 	it('!top and !pb answer with the tag score', async () => {
 		const n = b.messages.length;
 		b.send({ type: 'chat', text: '!top' });
@@ -205,6 +220,81 @@ describe('tag mode', () => {
 		assert.match(chat.text, /2\. \S+ 0\.0 s/);
 		clock += TAG_INTERMISSION_SECS * 1000;
 		assert.equal((await tick(b)).round, round + 1);
+	});
+});
+
+describe('tag sweep packet timing', () => {
+	async function crossing({ gap = 31.25, flags = 0, wall = false, taggerMoves = false, end = 50 } = {}) {
+		let now = 1000;
+		const map = tagMap();
+		map.zones.push({
+			type: 'teleport',
+			min: { x: 500, y: 500, z: 0 },
+			max: { x: 520, y: 520, z: 80 },
+			to: 'start',
+			dest: { pos: { x: 50, y: 0, z: 0 }, yaw: 0 }
+		});
+		if (wall) map.brushes.push({ type: 'box', min: { x: -250, y: -2, z: 0 }, max: { x: 250, y: 2, z: 100 }, material: 'wall' });
+		const s = await startServer({ port: 0, host: '127.0.0.1', dbPath: ':memory:', maps: [map], now: () => now, rng: () => 0, timers: false, log: () => {} });
+		const a = new TestClient(s.port);
+		const b = new TestClient(s.port);
+		try {
+			const wa = await a.hello('Tagger');
+			const wb = await b.hello('Runner');
+			now += TAG_INTERMISSION_SECS * 1000;
+			const tagger = { client: a, id: wa.selfId, y: wall ? -19 : 0 };
+			const runner = { client: b, id: wb.selfId, y: wall ? 19 : 0 };
+			const [moving, stationary] = taggerMoves ? [tagger, runner] : [runner, tagger];
+			const put = async ({ client, id, y }: typeof tagger, tick: number, x: number, stateFlags = 0) => {
+				client.sendState(netState(tick, x, { y, flags: stateFlags }));
+				await client.until(() => [...s.lobby.clients].find((p) => p.id === id)?.state?.tick === tick);
+			};
+			let tick = 1;
+			await put(stationary, tick, 0);
+			await put(moving, tick, -50);
+			s.lobby.tickMode();
+			for (let elapsed = 31.25; elapsed < gap; elapsed += 31.25) {
+				now += 31.25;
+				if (taggerMoves) await put(moving, ++tick, -50);
+				s.lobby.tickMode();
+			}
+			now = 1000 + TAG_INTERMISSION_SECS * 1000 + gap;
+			await put(moving, ++tick, end, flags);
+			s.lobby.tickMode();
+			return s.lobby.scoreRows().find((p) => p.it)?.id === wb.selfId;
+		} finally {
+			a.close();
+			b.close();
+			await s.close();
+		}
+	}
+
+	it('a forged teleport flag does not suppress a tag sweep', async () => {
+		assert.equal(await crossing({ flags: FLAG_TELEPORTED }), true);
+	});
+
+	it('does not sweep a new pose across a 281 ms packet gap', async () => {
+		assert.equal(await crossing({ gap: 281 }), false);
+	});
+
+	it('does not sweep a fresh tagger across a stalled runner', async () => {
+		assert.equal(await crossing({ taggerMoves: true, gap: TAG_MAX_SWEEP_MS + 1 }), false);
+	});
+
+	it('tags a stalled runner when the tagger ends in contact', async () => {
+		assert.equal(await crossing({ taggerMoves: true, gap: TAG_MAX_SWEEP_MS + 1, end: 30 }), true);
+	});
+
+	it('sweeps a fast tagger across a runner with a fresh pose', async () => {
+		assert.equal(await crossing({ taggerMoves: true }), true);
+	});
+
+	it('sweeps across a runner whose pose is exactly at the age limit', async () => {
+		assert.equal(await crossing({ taggerMoves: true, gap: TAG_MAX_SWEEP_MS }), true);
+	});
+
+	it('does not tag a runner across a solid wall at contact', async () => {
+		assert.equal(await crossing({ wall: true }), false);
 	});
 });
 

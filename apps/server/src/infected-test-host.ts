@@ -88,8 +88,8 @@ export function infectedHost(names: string[], opts: InfectedModeOptions = {}) {
 		rng: () => 0,
 		players: () => players,
 		send: (p, msg) => void players.find((o) => o.id === p.id)?.inbox.push(msg),
-		broadcast: (msg) => {
-			for (const p of players) p.inbox.push(msg);
+		broadcast: (msg, exceptId) => {
+			for (const p of players) if (p.id !== exceptId) p.inbox.push(msg);
 		},
 		sendBinary: () => {},
 		broadcastBinary: () => {},

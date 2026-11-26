@@ -14,49 +14,25 @@
  * - Coins: add to, subtract from or reset an account's balance (Economy.adjust).
  * - Every action is logged to the console and to `admin_log`.
  */
-import type { IncomingMessage } from 'node:http';
 import { isIP } from 'node:net';
 import type { AdminAction, AdminState, MapDef, ServerMessage } from '@surf/shared';
 import { ADMIN_COINS_MAX, ADMIN_EXTEND, formatTenths, getCosmetic, mapTitle, MAX_BAN_REASON, sanitizeText, usernameKey } from '@surf/shared';
 import { AttemptLimiter } from './auth.ts';
 import type { BanRow, Db } from './db.ts';
+export { clientIp, parseTrustProxy, type TrustProxy } from './proxy.ts';
 
 /** Admin actions per connection per minute (beyond that: "Slow down."). */
 export const ADMIN_ACTIONS_PER_MINUTE = 30;
 /** Automatic warnings and bans in `adminState`. */
 export const ADMIN_ABUSE_MAX = 50;
 
-/** `ADMIN_USERNAMES` (comma-separated, case-insensitive). Unset: `tim`. Empty: no admins. */
+/** `ADMIN_USERNAMES` (comma-separated, case-insensitive). Unset or empty: no admins. */
 export function parseAdminUsernames(raw: string | undefined): string[] {
-	if (raw === undefined) return ['tim'];
-	return raw
+	return (raw ?? '')
 		.split(',')
 		.map((s) => s.trim())
 		.filter(Boolean)
 		.map(usernameKey);
-}
-
-function isLoopback(addr: string): boolean {
-	return addr === '::1' || addr.startsWith('127.') || addr === 'localhost';
-}
-
-/**
- * Client IP for guest bans. Connections through the Cloudflare tunnel come
- * from cloudflared on this machine (loopback), so the real address is the
- * `CF-Connecting-IP` header; it is trusted only on loopback connections
- * (a remote client could set it to anything). Direct connections use the
- * socket address. Null when unknown: a loopback address is never returned,
- * because banning it would ban everyone on the tunnel.
- */
-export function clientIp(req: Pick<IncomingMessage, 'headers' | 'socket'> | undefined): string | null {
-	if (!req) return null;
-	let remote = req.socket?.remoteAddress ?? '';
-	if (remote.startsWith('::ffff:')) remote = remote.slice(7);
-	if (remote && !isLoopback(remote)) return isIP(remote) ? remote : null;
-	const cf = req.headers?.['cf-connecting-ip'];
-	const v = (Array.isArray(cf) ? cf[0] : cf)?.trim() ?? '';
-	if (!v || !isIP(v) || isLoopback(v)) return null;
-	return v.startsWith('::ffff:') ? v.slice(7) : v;
 }
 
 /**

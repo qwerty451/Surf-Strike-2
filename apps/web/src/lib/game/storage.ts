@@ -66,10 +66,8 @@ export const STORAGE_KEYS = {
 	binds: 'surf.binds',
 	name: 'surf.name',
 	playerId: 'surf.playerId',
-	/** Session token from the server (docs/gameplay.md#accounts-and-identity). */
-	session: 'surf.session',
-	/** Username of the stored session, for display before the server confirms it. */
-	account: 'surf.account',
+	/** Session for a database identity within its origin or discovery source. */
+	session: (scope: string) => `surf.session:${scope}`,
 	/** '1' once the player chose "Play as guest" (the account panel stays closed on load). */
 	guest: 'surf.guest',
 	/** Map last played: shown first after a reload, until the server (if any) names its map. */

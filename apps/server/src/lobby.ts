@@ -19,6 +19,7 @@ import type {
 	ServerMessage,
 	RichEntry,
 	SnapshotEntry,
+	Vec3,
 	VoteOption
 } from '@surf/shared';
 import {
@@ -28,17 +29,26 @@ import {
 	mapTitle,
 	encodeSnapshot,
 	decodeState,
+	FLAG_TELEPORTED,
+	teleportSeq,
+	withTeleportSeq,
+	isRaceMode,
 	mapCvars as sharedMapCvars,
 	MapRotation,
 	MAX_CHAT,
 	MAX_NAME,
 	MAX_PLAYERS,
+	MAX_REWIND_RTT_MS,
+	MAX_VELOCITY_HARD,
 	modeOf,
 	POINTS_SCALE,
 	PROTOCOL_VERSION,
+	CLOSE_PROTOCOL_MISMATCH,
 	RICHEST,
 	sanitizeText,
 	SNAPSHOT_HZ,
+	SnapshotTimeline,
+	snapshotSampleTimeMs,
 	TAG_TICK_HZ,
 	usernameKey
 } from '@surf/shared';
@@ -49,22 +59,39 @@ import { Casino } from './casino.ts';
 import { HELP_LINES, parseCommand } from './commands.ts';
 import type { AccountRow, BanRow, Db } from './db.ts';
 import { Economy } from './economy.ts';
+import { TickScheduler } from './scheduler.ts';
+import type { LobbyMetricsHooks } from './metrics.ts';
 import { Shop } from './shop.ts';
+import { isClientTransport, WsClientTransport, type ClientTransport } from './transport.ts';
 import { createServerMode, type ModeHost, type ModeOptions, type ServerMode } from './modes/index.ts';
-import type { ZoneKind } from './validation.ts';
+import { observeRenderTime } from './modes/types.ts';
+import { PeerRtt } from './peer-rtt.ts';
+import { JUMP_SLACK, mapTeleport, nearPose, type ZoneKind } from './validation.ts';
 
 export { SNAPSHOT_HZ };
 /** Gamemode rule ticks (tag contact checks), at least the snapshot rate. */
 export const MODE_TICK_HZ = TAG_TICK_HZ;
 export const SCOREBOARD_MS = 1000;
 export const ROTATION_MS = 100;
-export const PING_MS = 2000;
+export const PING_MS = 500;
+const PONG_TIMEOUT_MS = 10_000;
+const CLIENT_IDLE_TIMEOUT_MS = 10_000;
 export const TIME_LEFT_MS = 5000;
-export const HELLO_TIMEOUT_MS = 10_000;
+export const HELLO_TIMEOUT_MS = 5_000;
+/** Maximum open sockets awaiting `hello` (separate from the 32 player slots). */
+export const MAX_PENDING_CONNECTIONS = 16;
+export const DEFAULT_MAX_PENDING_PER_IP = 4;
+
+/** Parse an optional SNAPSHOT_HZ setting (default 32; 64 supported for lower latency on good links). */
+export function parseSnapshotHz(raw: string | number | undefined): number {
+	const n = typeof raw === 'number' ? raw : Number(raw);
+	return Number.isFinite(n) && n >= 1 && n <= 128 ? Math.round(n) : SNAPSHOT_HZ;
+}
 
 /** Per-second limits: above `limit` messages are dropped, above `kick` the client is kicked. */
 export const RATE = {
 	state: { limit: 70, kick: 250 },
+	spawnAck: { limit: 12, kick: 40 },
 	chat: { limit: 2, kick: 20 },
 	json: { limit: 60, kick: 300 },
 	shop: { limit: 8, kick: 100 },
@@ -85,9 +112,19 @@ export interface LobbyOptions {
 	playClock?: () => number;
 	/** Start interval timers (snapshot, scoreboard, rotation, ping). Default true. */
 	timers?: boolean;
+	/** Snapshot send rate in Hz (default SNAPSHOT_HZ = 32; 64 supported). */
+	snapshotHz?: number;
 	maxPlayers?: number;
-	/** Connected clients allowed per IP address (ipKey); 0 = no limit (default; `pnpm host` sets 3). */
+	/** Pre-hello WebSocket connections allowed (separate from `maxPlayers`). Default 16. */
+	maxPending?: number;
+	/** Pending sockets per IP. 0 disables the per-IP cap. */
+	maxPendingPerIp?: number;
+	/** Close sockets that do not send `hello` within this many ms. Default 5000. */
+	helloTimeoutMs?: number;
+	/** Connected players per IP. 0 disables the per-IP cap. */
 	maxPerIp?: number;
+	/** Optional runtime metrics hooks (/metrics). */
+	metrics?: LobbyMetricsHooks;
 	log?: (msg: string) => void;
 	/** Seconds per map (default MAP_DURATION); dev testing only, see server.ts. */
 	mapDuration?: number;
@@ -95,7 +132,7 @@ export interface LobbyOptions {
 	rtvBlock?: number;
 	/** Gamemode tuning (tests: shorter tag rounds). */
 	modes?: ModeOptions;
-	/** Admin account usernames, case-insensitive (default: ADMIN_USERNAMES rules, i.e. `tim`). */
+	/** Admin account usernames, case-insensitive (default: none). */
 	adminUsernames?: string[];
 }
 
@@ -113,7 +150,7 @@ class Window {
 }
 
 interface Client {
-	socket: WebSocket;
+	transport: ClientTransport;
 	id: number;
 	playerId: string;
 	name: string;
@@ -137,15 +174,28 @@ interface Client {
 	spectating: boolean;
 	targetId: number | null;
 	state: NetState | null;
+	relay: { timeline: SnapshotTimeline; sample: { state: NetState; at: number } | null } | null;
+	pendingSpawn: Vec3 | null;
+	spawnAt: number;
+	spawnSeq: number;
+	spawnFrame: string | null;
+	spawnSentAt: number;
+	clientTeleportSeq: number;
+	relayTeleportSeq: number;
+	readonly hasRttSample: boolean;
 	ping: number;
+	rtt: PeerRtt;
+	lastPongAt: number;
+	lastMessageAt: number;
 	/** Worn cosmetics (docs/economy.md#shop); the default look for guests. */
 	loadout: Loadout;
-	rate: { state: Window; chat: Window; json: Window; shop: Window; casino: Window };
+	rate: { state: Window; spawnAck: Window; chat: Window; json: Window; shop: Window; casino: Window };
 	helloTimer: NodeJS.Timeout | null;
 	closed: boolean;
 }
 
 const ZONE_KINDS = new Set<ZoneKind>(['start', 'stage', 'checkpoint', 'end']);
+const SPAWN_RETRY_MS = 250;
 const PLAYER_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 
 /** Full cvars for a map: its gamemode's profile, then the map's overrides. */
@@ -159,11 +209,21 @@ export class Lobby {
 	private readonly maps: Map<string, MapDef>;
 	private readonly db: Db;
 	private readonly now: () => number;
-	private readonly maxPlayers: number;
+	/** Monotonic server clock (ms) stamped into snapshots (injectable via playClock/now for tests). */
+	private readonly serverClock: () => number;
+	private readonly snapHz: number;
+	private snapshotSeq = 0;
+	readonly maxPlayers: number;
+	private readonly maxPending: number;
+	private readonly maxPendingPerIp: number;
+	private readonly helloTimeoutMs: number;
 	private readonly maxPerIp: number;
+	private readonly metrics?: LobbyMetricsHooks;
 	private readonly log: (msg: string) => void;
+	private readonly loginFailsByIp = new AttemptLimiter(AUTH_LIMITS.loginFailsPerConnection * 2);
+	private readonly registersByIp = new AttemptLimiter(AUTH_LIMITS.registersPerConnection * 2);
 	private map: MapDef;
-	private timers: NodeJS.Timeout[] = [];
+	private scheduler: TickScheduler | null = null;
 	private lastTimeLeftSent = 0;
 	private closing = false;
 	private mode: ServerMode;
@@ -190,7 +250,11 @@ export class Lobby {
 		this.db = opts.db;
 		this.now = opts.now ?? Date.now;
 		this.maxPlayers = opts.maxPlayers ?? MAX_PLAYERS;
+		this.maxPending = opts.maxPending ?? MAX_PENDING_CONNECTIONS;
+		this.maxPendingPerIp = opts.maxPendingPerIp ?? 0;
+		this.helloTimeoutMs = opts.helloTimeoutMs ?? HELLO_TIMEOUT_MS;
 		this.maxPerIp = opts.maxPerIp ?? 0;
+		this.metrics = opts.metrics;
 		this.log = opts.log ?? ((m) => console.log(m));
 		this.accounts = new Accounts(this.db, () => this.now());
 		this.stats = new AccountStats(this.db, opts.playClock ?? opts.now, this.log);
@@ -200,6 +264,8 @@ export class Lobby {
 		this.modeOptions = opts.modes ?? {};
 		this.admin = this.createAdmin(opts.adminUsernames ?? parseAdminUsernames(undefined));
 		const clock = opts.playClock ?? opts.now ?? (() => performance.now());
+		this.serverClock = clock;
+		this.snapHz = parseSnapshotHz(opts.snapshotHz);
 		this.economy = this.createEconomy(clock);
 		this.shop = new Shop<Client>({
 			db: this.db,
@@ -240,15 +306,42 @@ export class Lobby {
 		});
 		this.lastTimeLeftSent = this.now();
 		if (opts.timers !== false) {
-			this.timers.push(
-				setInterval(() => this.sendSnapshot(), 1000 / SNAPSHOT_HZ),
-				setInterval(() => this.sendScoreboard(), SCOREBOARD_MS),
-				setInterval(() => this.updateRotation(), ROTATION_MS),
-				setInterval(() => this.sendPings(), PING_MS),
-				setInterval(() => this.stats.flush(), PLAYTIME_FLUSH_MS),
-				setInterval(() => this.tickMode(), 1000 / MODE_TICK_HZ)
-			);
+			const loopHz = Math.max(MODE_TICK_HZ, this.snapHz);
+			const tickMs = 1000 / loopHz;
+			const modeStepMs = 1000 / MODE_TICK_HZ;
+			const snapStepMs = 1000 / this.snapHz;
+			let modeAcc = 0;
+			let snapAcc = 0;
+			this.scheduler = new TickScheduler({
+				hz: loopHz,
+				onTick: () => {
+					// Run mode tick before snapshot send on shared ticks so freshly
+					// processed states and mode changes land in the immediate snapshot.
+					modeAcc += tickMs;
+					if (modeAcc + 0.001 >= modeStepMs) {
+						modeAcc -= modeStepMs;
+						this.tickMode();
+					}
+					snapAcc += tickMs;
+					if (snapAcc + 0.001 >= snapStepMs) {
+						snapAcc -= snapStepMs;
+						this.sendSnapshot();
+					}
+				},
+				periodic: [
+					{ everyMs: ROTATION_MS, run: () => this.updateRotation() },
+					{ everyMs: SCOREBOARD_MS, run: () => this.sendScoreboard() },
+					{ everyMs: PING_MS, run: () => this.sendPings() },
+					{ everyMs: PLAYTIME_FLUSH_MS, run: () => this.stats.flush() }
+				]
+			});
+			this.scheduler.start();
 		}
+	}
+
+	/** Active snapshot broadcast rate (Hz). */
+	get snapshotHz(): number {
+		return this.snapHz;
 	}
 
 	get currentMap(): MapDef {
@@ -262,6 +355,7 @@ export class Lobby {
 
 	/** Advance gamemode rules (timer-driven at MODE_TICK_HZ; public for tests). */
 	tickMode(): void {
+		this.metrics?.recordModeTick();
 		this.mode.tick();
 		this.economy.tick();
 		this.casino.tick();
@@ -300,6 +394,10 @@ export class Lobby {
 			db: this.db,
 			economy: this.economy.forMode(),
 			now: () => this.now(),
+			serverNow: () => this.serverClock(),
+			replaySaved: (mapId) => {
+				if (!this.closing && this.map.id === mapId) this.mode.replayChanged?.();
+			},
 			rng: () => this.rng(),
 			*players() {
 				for (const c of lobby.clients) if (c.helloed) yield c;
@@ -308,7 +406,7 @@ export class Lobby {
 				this.economy.sent(p as Client, msg);
 				this.send(p as Client, msg);
 			},
-			broadcast: (msg) => this.broadcast(msg),
+			broadcast: (msg, exceptId) => this.broadcast(msg, exceptId),
 			sendBinary: (p, data) => this.sendRaw(p as Client, Buffer.from(data), true),
 			broadcastBinary: (data, droppable = false) => {
 				const buf = Buffer.from(data);
@@ -366,7 +464,7 @@ export class Lobby {
 	private kickBanned(c: Client, ban: BanRow): void {
 		this.log(`banned #${c.id} ${c.name}`);
 		this.send(c, this.bannedMessage(ban));
-		c.socket.close(4009, 'banned');
+		c.transport.close(4009, 'banned');
 		this.onClose(c);
 	}
 
@@ -382,13 +480,14 @@ export class Lobby {
 		return { name: fallback, taken: true };
 	}
 
-	/** True if `c`'s address already has `maxPerIp` connected clients. Unknown addresses (dev, loopback) are never limited. */
-	private ipFull(c: Client): boolean {
-		if (this.maxPerIp <= 0 || c.ip === null) return false;
-		const key = ipKey(c.ip);
+	/** Unknown addresses share one bucket, separate from any visitor IP. */
+	private countFromIp(ip: string | null, helloed: boolean): number {
+		const key = ip === null ? null : ipKey(ip);
 		let n = 0;
-		for (const o of this.clients) if (o !== c && o.helloed && o.ip !== null && ipKey(o.ip) === key) n++;
-		return n >= this.maxPerIp;
+		for (const c of this.clients) {
+			if (c.helloed === helloed && (c.ip === null ? null : ipKey(c.ip)) === key) n++;
+		}
+		return n;
 	}
 
 	get playerCount(): number {
@@ -397,31 +496,61 @@ export class Lobby {
 		return n;
 	}
 
+	/** Open sockets that have not completed `hello` yet. */
+	get pendingCount(): number {
+		let n = 0;
+		for (const c of this.clients) if (!c.helloed) n++;
+		return n;
+	}
+
+	/** Largest WebSocket send queue across all connected sockets (bytes). */
+	maxBufferedBytes(): number {
+		let max = 0;
+		for (const c of this.clients) {
+			if (c.transport.bufferedAmount > max) max = c.transport.bufferedAmount;
+		}
+		return max;
+	}
+
 	close(): void {
 		this.closing = true;
-		for (const t of this.timers) clearInterval(t);
-		this.timers = [];
+		this.scheduler?.stop();
+		this.scheduler = null;
 		this.stats.close();
 		this.economy.close();
-		for (const c of this.clients) c.socket.close(1001, 'server shutting down');
+		for (const c of this.clients) {
+			if (c.helloTimer) clearTimeout(c.helloTimer);
+			c.helloTimer = null;
+			c.transport.close(1001, 'server shutting down');
+		}
 	}
 
 	// -----------------------------------------------------------------------
 	// Connections
 
+	/** Called synchronously before the HTTP upgrade. */
+	upgradeStatus(ip: string | null): 503 | 429 | null {
+		if (this.closing || this.pendingCount >= this.maxPending) return 503;
+		if (this.maxPendingPerIp > 0 && this.countFromIp(ip, false) >= this.maxPendingPerIp) return 429;
+		return null;
+	}
+
 	/** `ip`: client IP for guest bans (admin.ts clientIp), null when unknown. */
-	handleConnection(socket: WebSocket, ip: string | null = null): void {
-		if (this.closing) {
-			socket.close(1001, 'server shutting down');
-			return;
-		}
-		if (this.clients.size >= this.maxPlayers) {
-			socket.send(JSON.stringify({ type: 'full' } satisfies ServerMessage));
-			socket.close(4003, 'server full');
+	handleConnection(conn: WebSocket | ClientTransport, ip: string | null = null): void {
+		const transport = isClientTransport(conn) ? conn : new WsClientTransport(conn);
+
+		const status = this.upgradeStatus(ip);
+		if (status !== null) {
+			if (this.closing) transport.close(1001, 'server shutting down');
+			else if (status === 429) transport.close(CLOSE_IP_LIMIT, 'too many pending connections');
+			else {
+				transport.sendReliable(JSON.stringify({ type: 'full' } satisfies ServerMessage));
+				transport.close(4003, 'server full');
+			}
 			return;
 		}
 		const c: Client = {
-			socket,
+			transport,
 			id: this.freeId(),
 			playerId: '',
 			name: '',
@@ -438,25 +567,44 @@ export class Lobby {
 			spectating: false,
 			targetId: null,
 			state: null,
-			ping: 0,
+			relay: null,
+			pendingSpawn: null,
+			spawnAt: 0,
+			spawnSeq: 0,
+			spawnFrame: null,
+			spawnSentAt: 0,
+			clientTeleportSeq: 0,
+			relayTeleportSeq: 0,
+			get hasRttSample() {
+				return this.rtt.sample(performance.now()) !== null;
+			},
+			get ping() {
+				return Math.min(MAX_REWIND_RTT_MS, this.rtt.estimate(performance.now()));
+			},
+			rtt: new PeerRtt(),
+			lastPongAt: 0,
+			lastMessageAt: 0,
 			loadout: emptyLoadout(),
-			rate: { state: new Window(), chat: new Window(), json: new Window(), shop: new Window(), casino: new Window() },
+			rate: { state: new Window(), spawnAck: new Window(), chat: new Window(), json: new Window(), shop: new Window(), casino: new Window() },
 			helloTimer: null,
 			closed: false
 		};
-		c.helloTimer = setTimeout(() => {
-			if (!c.helloed) socket.close(4000, 'hello timeout');
-		}, HELLO_TIMEOUT_MS);
+		c.helloTimer = setTimeout(() => transport.terminate(), this.helloTimeoutMs);
 		this.clients.add(c);
-		socket.on('message', (data, isBinary) => {
+		transport.onMessage((data, isBinary) => {
 			try {
-				this.onMessage(c, data as Buffer, isBinary);
+				this.onMessage(c, data, isBinary);
 			} catch (err) {
 				this.log(`error handling message from #${c.id}: ${(err as Error).message}`);
 			}
 		});
-		socket.on('close', () => this.onClose(c));
-		socket.on('error', () => socket.terminate());
+		transport.onPong?.((challenge) => {
+			const now = performance.now();
+			if (c.helloed && c.rtt.pong(challenge, now) !== null) c.lastPongAt = now;
+		});
+		transport.onClose(() => this.onClose(c));
+		transport.onError(() => transport.terminate());
+		this.send(c, { type: 'serverIdentity', serverId: this.db.serverId });
 	}
 
 	private freeId(): number {
@@ -490,21 +638,25 @@ export class Lobby {
 
 	private kick(c: Client, reason: string): void {
 		this.log(`kick #${c.id} ${c.name}: ${reason}`);
-		c.socket.close(4008, reason);
-		c.socket.terminate();
+		c.transport.close(4008, reason);
+		c.transport.terminate();
 	}
 
 	private onMessage(c: Client, data: Buffer, isBinary: boolean): void {
+		if (!c.transport.open) return;
 		const t = performance.now();
 		if (isBinary) {
 			const n = c.rate.state.hit(t);
 			if (n > RATE.state.kick) return this.kick(c, 'state flood');
 			if (n > RATE.state.limit || !c.helloed || c.spectating) return;
-			const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
-			const s = decodeState(ab);
+			const received = decodeState(data);
+			if (!received) return;
+			const s = this.combatState(c, received);
 			if (!s) return;
 			c.state = s;
-			this.economy.state(c, s);
+			c.lastMessageAt = t;
+			if (s.renderServerTimeMs !== undefined) observeRenderTime(s.renderServerTimeMs, this.serverClock(), c);
+			this.economy.state(c, received);
 			this.mode.state(c, s);
 			return;
 		}
@@ -522,7 +674,14 @@ export class Lobby {
 			if (msg.type === 'hello') this.onHello(c, msg);
 			return;
 		}
+		c.lastMessageAt = t;
 		switch (msg.type) {
+			case 'spawnAck': {
+				const k = c.rate.spawnAck.hit(t);
+				if (k > RATE.spawnAck.kick) return this.kick(c, 'spawn ack flood');
+				if (k <= RATE.spawnAck.limit && c.spawnFrame && msg.seq === c.spawnSeq) c.spawnFrame = null;
+				return;
+			}
 			case 'zone':
 				return this.onZone(c, msg);
 			case 'chat': {
@@ -594,10 +753,9 @@ export class Lobby {
 			}
 			case 'admin':
 				return this.admin.handle(c, msg.action);
-			case 'pong':
+			case 'ping':
 				if (typeof msg.t === 'number' && Number.isFinite(msg.t)) {
-					const rtt = t - msg.t;
-					if (rtt >= 0 && rtt < 60_000) c.ping = c.ping === 0 ? rtt : c.ping * 0.7 + rtt * 0.3;
+					this.send(c, { type: 'pong', t: msg.t, serverTime: this.serverClock() });
 				}
 				return;
 			default:
@@ -607,13 +765,19 @@ export class Lobby {
 
 	private onHello(c: Client, msg: Extract<ClientMessage, { type: 'hello' }>): void {
 		if (typeof msg.playerId !== 'string' || !PLAYER_ID_RE.test(msg.playerId)) {
-			c.socket.close(4001, 'bad player id');
+			c.transport.close(4001, 'bad player id');
+			return;
+		}
+		if (msg.version !== PROTOCOL_VERSION) {
+			this.systemTo(c, `Server protocol changed to v${PROTOCOL_VERSION}. Reload the page to reconnect.`);
+			// The v1 browser stops retrying and shows a reload notice on 4002.
+			c.transport.close(msg.version === 1 ? 4002 : CLOSE_PROTOCOL_MISMATCH, 'protocol mismatch: reload the page');
 			return;
 		}
 		// Same player connecting again (reload, second tab): drop the old socket.
 		for (const o of this.clients) {
 			if (o !== c && o.helloed && o.playerId === msg.playerId) {
-				o.socket.close(4002, 'connected from another tab');
+				o.transport.close(4002, 'connected from another tab');
 				this.onClose(o);
 			}
 		}
@@ -623,16 +787,22 @@ export class Lobby {
 		if (ban) {
 			this.log(`banned hello #${c.id}${resumed ? ` account ${resumed.account.id}` : ''}`);
 			this.send(c, this.bannedMessage(ban));
-			c.socket.close(4009, 'banned');
+			c.transport.close(4009, 'banned');
 			return;
 		}
 		const guest = this.guestNameFor(typeof msg.name === 'string' ? msg.name : '', msg.playerId);
 		const guestName = guest.name;
 		if (resumed) this.dropAccountDuplicates(c, resumed.account.id);
+		// Check the player cap after dropping duplicate connections.
+		if (this.playerCount >= this.maxPlayers) {
+			this.send(c, { type: 'full' });
+			c.transport.close(4003, 'server full');
+			return;
+		}
 		// After the duplicates are gone, so a reload or account takeover never counts twice.
-		if (this.ipFull(c)) {
+		if (this.maxPerIp > 0 && this.countFromIp(c.ip, true) >= this.maxPerIp) {
 			this.log(`too many connections from one address: #${c.id}`);
-			c.socket.close(CLOSE_IP_LIMIT, 'too many connections from this network');
+			c.transport.close(CLOSE_IP_LIMIT, 'too many connections from this network');
 			return;
 		}
 		const name = resumed ? resumed.account.username : guestName;
@@ -643,6 +813,7 @@ export class Lobby {
 		c.sessionHash = resumed?.hash ?? null;
 		c.admin = admin;
 		c.helloed = true;
+		c.lastPongAt = c.lastMessageAt = performance.now();
 		c.loadout = this.shop.loadoutOf(c.accountId);
 		if (c.accountId !== null) this.stats.join(c.accountId, c);
 		if (c.helloTimer) clearTimeout(c.helloTimer);
@@ -653,6 +824,8 @@ export class Lobby {
 		for (const o of this.clients) if (o.helloed) players.push(info(o));
 		this.send(c, {
 			type: 'welcome',
+			version: PROTOCOL_VERSION,
+			serverId: this.db.serverId,
 			selfId: c.id,
 			map: this.map.id,
 			mode: this.map.kind,
@@ -660,8 +833,11 @@ export class Lobby {
 			players,
 			cvars: mapCvars(this.map),
 			records: this.mode.records(c),
-			account: resumed ? { username: resumed.account.username, admin } : null
+			account: resumed ? { username: resumed.account.username, admin } : null,
+			serverTime: this.serverClock(),
+			snapshotHz: this.snapHz
 		});
+		this.ping(c, performance.now());
 		this.send(c, this.admin.mapsMessage());
 		if (!resumed && guest.taken) {
 			this.systemTo(c, `That name belongs to a registered account. Log in to use it; playing as ${guestName}.`);
@@ -675,9 +851,6 @@ export class Lobby {
 		this.mode.join(c);
 		this.broadcast({ type: 'join', player: info(c) }, c);
 		this.system(`${name} joined.`, c);
-		if (msg.version !== PROTOCOL_VERSION) {
-			this.systemTo(c, `Protocol version mismatch (server ${PROTOCOL_VERSION}, client ${String(msg.version)}). Reload the page.`);
-		}
 		const v = this.rotation.vote;
 		if (v) {
 			this.send(c, {
@@ -700,7 +873,7 @@ export class Lobby {
 	private dropAccountDuplicates(c: Client, accountId: number): void {
 		for (const o of this.clients) {
 			if (o !== c && o.helloed && o.accountId === accountId) {
-				o.socket.close(4002, 'logged in from another tab or device');
+				o.transport.close(4002, 'logged in from another tab or device');
 				this.onClose(o);
 			}
 		}
@@ -712,10 +885,17 @@ export class Lobby {
 		if (c.accountId !== null) return fail(`Already logged in as ${c.name}. Log out first.`);
 		const username = typeof msg.username === 'string' ? msg.username.slice(0, 256) : '';
 		const password = typeof msg.password === 'string' ? msg.password : '';
+		const ipBucket = c.ip !== null ? ipKey(c.ip) : null;
 		if (msg.type === 'register') {
 			const t = this.now();
-			if (c.registers.blocked('conn', t)) return fail(TOO_MANY);
+			if (c.registers.blocked('conn', t) || (ipBucket !== null && this.registersByIp.blocked(ipBucket, t))) {
+				return fail(TOO_MANY);
+			}
 			c.registers.hit('conn', t);
+			if (ipBucket !== null) this.registersByIp.hit(ipBucket, t);
+			if (this.admin.isAdminAccount(username)) return fail('That username is taken.');
+		} else if (ipBucket !== null && this.loginFailsByIp.blocked(ipBucket, this.now())) {
+			return fail(TOO_MANY);
 		}
 		c.authBusy = true;
 		let outcome: Awaited<ReturnType<Accounts['login']>>;
@@ -729,6 +909,9 @@ export class Lobby {
 		}
 		if (c.closed || this.closing || c.accountId !== null) return;
 		if (!outcome.ok) {
+			if (msg.type === 'login' && ipBucket !== null && outcome.error !== TOO_MANY) {
+				this.loginFailsByIp.hit(ipBucket, this.now());
+			}
 			this.log(`${msg.type} failed #${c.id}`);
 			return fail(outcome.error);
 		}
@@ -883,6 +1066,34 @@ export class Lobby {
 		this.setSpectate(c, true, target.id);
 	}
 
+	/** Only server spawns and plausible map teleports break the combat pose history. */
+	private combatState(c: Client, state: NetState): NetState | null {
+		if (isRaceMode(this.mode.id)) return state;
+		if ((state.spawnSeq ?? 0) !== c.spawnSeq) return null;
+		const clientSeq = teleportSeq(state.flags);
+		let teleported = false;
+		if (c.pendingSpawn) {
+			const elapsed = Math.max(0, this.serverClock() - c.spawnAt) / 1000;
+			// Movement clamps each axis. Allow diagonal travel and the usual position slack.
+			const axisLimit = Math.min(mapCvars(this.map).sv_maxvelocity, MAX_VELOCITY_HARD);
+			const reach = Math.sqrt(3) * axisLimit * elapsed + JUMP_SLACK;
+			if (!nearPose(state, c.pendingSpawn, reach)) return null;
+			c.pendingSpawn = null;
+			c.spawnFrame = null;
+			teleported = true;
+		} else if (c.state && (clientSeq !== c.clientTeleportSeq || (state.flags & FLAG_TELEPORTED) !== 0)) {
+			teleported = mapTeleport(this.map, c.state, state);
+		}
+		c.clientTeleportSeq = clientSeq;
+		if (teleported) {
+			c.relayTeleportSeq = (c.relayTeleportSeq + 1) & 0xff;
+			// Retain the time anchor, but never relay the pre-teleport pose again.
+			if (c.relay) c.relay.sample = null;
+		}
+		const flags = withTeleportSeq((state.flags & ~FLAG_TELEPORTED) | (teleported ? FLAG_TELEPORTED : 0), c.relayTeleportSeq);
+		return { ...state, flags };
+	}
+
 	private setSpectate(c: Client, spectating: boolean, targetId: number | null): void {
 		if (spectating) {
 			const target = [...this.clients].find((o) => o.id === targetId && o !== c && o.helloed && !o.spectating);
@@ -896,6 +1107,9 @@ export class Lobby {
 		c.targetId = targetId;
 		if (changed) {
 			c.state = null;
+			if (c.relay) c.relay.sample = null;
+			c.pendingSpawn = null;
+			c.spawnFrame = null;
 			if (spectating) this.rotation.removeVoter(String(c.id));
 		}
 		this.broadcast({ type: 'spectating', id: c.id, spectating, targetId });
@@ -1059,6 +1273,9 @@ export class Lobby {
 		for (const c of this.clients) {
 			if (!c.helloed) continue;
 			c.state = null;
+			c.relay = null;
+			c.pendingSpawn = null;
+			c.spawnFrame = null;
 			this.send(c, {
 				type: 'mapChange',
 				map: map.id,
@@ -1081,12 +1298,31 @@ export class Lobby {
 	// Periodic sends
 
 	sendSnapshot(): void {
+		const now = this.serverClock();
+		this.metrics?.recordSnapshotTick();
 		const entries: SnapshotEntry[] = [];
 		for (const c of this.clients) {
-			if (c.helloed && !c.spectating && c.state) entries.push({ id: c.id, ...c.state });
+			if (!c.helloed || c.spectating) continue;
+			if (c.spawnFrame && now - c.spawnSentAt >= SPAWN_RETRY_MS) {
+				c.spawnSentAt = now;
+				this.sendRaw(c, c.spawnFrame);
+			}
+			if (!c.state) continue;
+			const relay = c.relay ??= { timeline: new SnapshotTimeline(), sample: null };
+			const at = relay.timeline.push(c.state.tick, now);
+			if (at !== null) relay.sample = { state: c.state, at };
+			if (!relay.sample) continue;
+			entries.push({
+				id: c.id,
+				...relay.sample.state,
+				sampleTimeMs: snapshotSampleTimeMs(relay.sample.at, now),
+				sourceIdle: relay.timeline.sourceIdle
+			});
 		}
 		if (entries.length === 0) return;
-		const buf = Buffer.from(encodeSnapshot(entries));
+		this.mode.snapshot?.(entries);
+		this.snapshotSeq = (this.snapshotSeq + 1) & 0xffff;
+		const buf = Buffer.from(encodeSnapshot(entries, now, this.snapshotSeq));
 		for (const c of this.clients) if (c.helloed) this.sendRaw(c, buf);
 	}
 
@@ -1099,6 +1335,7 @@ export class Lobby {
 			const totals = c && c.accountId !== null ? this.stats.totals(c.accountId) : null;
 			return {
 				...r,
+				ping: c ? Math.round(c.rtt.estimate(performance.now())) : r.ping,
 				pointsTotal: totals?.pointsTotal ?? null,
 				playtimeSecs: totals?.playtimeSecs ?? null,
 				// Read fresh: awards, purchases, loot boxes, casino and admins all change it.
@@ -1121,27 +1358,57 @@ export class Lobby {
 	}
 
 	sendPings(): void {
-		const t = Math.round(performance.now());
-		this.broadcast({ type: 'ping', t });
+		const now = performance.now();
+		for (const c of this.clients) {
+			if (!c.helloed || !c.transport.open) continue;
+			const noPong = c.transport.ping && c.transport.onPong && now - c.lastPongAt >= PONG_TIMEOUT_MS;
+			const idle = !c.spectating && now - c.lastMessageAt >= CLIENT_IDLE_TIMEOUT_MS;
+			if (noPong || idle) {
+				this.log(`timeout #${c.id} ${c.name}: ${noPong ? 'no WebSocket pong' : 'no game traffic'}`);
+				c.transport.terminate();
+				continue;
+			}
+			this.ping(c, now);
+		}
+	}
+
+	private ping(c: Client, now: number): void {
+		if (!c.transport.open) return;
+		c.transport.ping?.(c.rtt.probe(now));
+		this.send(c, { type: 'ping', t: now });
 	}
 
 	// -----------------------------------------------------------------------
 	// Send helpers
 
-	private sendRaw(c: Client, data: string | Buffer, reliable = false): void {
-		if (c.socket.readyState !== c.socket.OPEN) return;
-		// Drop frames to clients with a large backlog instead of buffering forever.
-		if (typeof data !== 'string' && !reliable && c.socket.bufferedAmount > 1 << 20) return;
-		c.socket.send(data);
+	private sendRaw(c: Client, data: string | Uint8Array, reliable = false): void {
+		if (!c.transport.open) return;
+		if (typeof data === 'string' || reliable) c.transport.sendReliable(data);
+		else if (!c.transport.sendUnreliable(data)) {
+			this.metrics?.recordFrameDropped();
+			return;
+		}
+		this.metrics?.recordBytesSent(typeof data === 'string' ? Buffer.byteLength(data) : data.byteLength);
 	}
 
 	private send(c: Client, msg: ServerMessage): void {
+		if ((msg.type === 'hns' || msg.type === 'inf' || msg.type === 'zm') && msg.ev.e === 'spawn' && msg.ev.id === c.id) {
+			c.pendingSpawn = 'pos' in msg.ev ? msg.ev.pos : { x: msg.ev.x, y: msg.ev.y, z: msg.ev.z };
+			c.state = null;
+			c.spawnSeq = c.spawnSeq === 0xffff ? 1 : c.spawnSeq + 1;
+			c.spawnFrame = JSON.stringify({ ...msg, spawnSeq: c.spawnSeq });
+			c.spawnAt = this.serverClock();
+			c.spawnSentAt = c.spawnAt;
+			this.sendRaw(c, c.spawnFrame);
+			return;
+		}
 		this.sendRaw(c, JSON.stringify(msg));
 	}
 
-	private broadcast(msg: ServerMessage, except?: Client): void {
+	private broadcast(msg: ServerMessage, except?: Client | number): void {
 		const s = JSON.stringify(msg);
-		for (const c of this.clients) if (c.helloed && c !== except) this.sendRaw(c, s);
+		const skipId = typeof except === 'number' ? except : except?.id;
+		for (const c of this.clients) if (c.helloed && c.id !== skipId) this.sendRaw(c, s);
 	}
 
 	private system(text: string, except?: Client): void {

@@ -188,6 +188,7 @@ describe('HnsGame round flow', () => {
 		s.place(seeker, at(-300, 0));
 		const pulls = s.step(100).filter((e) => e.e === 'spawn');
 		expect(pulls).toEqual([expect.objectContaining({ id: seeker, role: 'seeker', pos: { x: -500, y: 0, z: 0 } })]);
+		expect(s.g.posAt(seeker, s.now() - 100)).toMatchObject(at(-500, 0));
 	});
 
 	it('knife kill converts the hider into a frozen seeker at a seeker spawn', () => {
@@ -236,6 +237,28 @@ describe('HnsGame round flow', () => {
 		expect(s.g.posAt(hider, s.now() - 200)).toMatchObject({ x: 2000, y: 0 });
 		const res = swingAt(s, seeker, at(2000, 0), 200);
 		expect(res.ok && res.hit).toBe(hider);
+	});
+
+	it('drops the old hider pose at the round spawn', () => {
+		const s = setup(2);
+		s.step();
+		s.place(2, at(0));
+		const spawns = s.step(HNS_START_SECS * 1000);
+		const spawn = spawns.find((e) => e.e === 'spawn' && e.id === 2);
+		if (spawn?.e !== 'spawn') throw new Error('missing hider spawn');
+		s.place(2, { ...spawn.pos, ducked: false });
+		expect(s.g.posAt(2, s.now() - 200)).toMatchObject(spawn.pos);
+	});
+
+	it('does not hit between the two sides of a hider teleport', () => {
+		const s = setup(2);
+		toSeeking(s);
+		const seeker = s.g.seekers[0]!;
+		const hider = s.g.hiders[0]!;
+		s.place(hider, at(2000, 0));
+		s.step(80);
+		s.g.setPos(hider, at(2000, 300), s.now(), true);
+		expect(swingAt(s, seeker, at(2000, 150), 40)).toMatchObject({ ok: true, hit: null });
 	});
 
 	it('line of sight blocks knife hits', () => {

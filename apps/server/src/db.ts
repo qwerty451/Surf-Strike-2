@@ -28,6 +28,7 @@
  * added with a default, so an existing database migrates in place on start-up
  * without losing data.
  */
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
@@ -141,6 +142,7 @@ export interface AccountRow {
 
 export class Db {
 	readonly db: Database.Database;
+	readonly serverId: string;
 	private readonly st: ReturnType<Db['prepare']>;
 
 	constructor(path: string) {
@@ -149,6 +151,10 @@ export class Db {
 		this.db.pragma('journal_mode = WAL');
 		this.db.pragma('foreign_keys = ON');
 		this.db.exec(`
+			CREATE TABLE IF NOT EXISTS server_settings (
+				key TEXT PRIMARY KEY,
+				value TEXT NOT NULL
+			);
 			CREATE TABLE IF NOT EXISTS players (
 				id TEXT PRIMARY KEY,
 				name TEXT NOT NULL,
@@ -303,6 +309,11 @@ export class Db {
 		// Missing = permanent ban / no active time yet.
 		this.addColumn('bans', 'expires_at', 'INTEGER');
 		this.addColumn('account_stats', 'active_ms', 'INTEGER NOT NULL DEFAULT 0');
+		this.db.prepare("INSERT OR IGNORE INTO server_settings (key, value) VALUES ('serverId', ?)").run(randomUUID());
+		const { value } = this.db.prepare<[], { value: string }>(
+			"SELECT value FROM server_settings WHERE key = 'serverId'"
+		).get()!;
+		this.serverId = value;
 		this.st = this.prepare();
 	}
 

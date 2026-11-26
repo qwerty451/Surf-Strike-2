@@ -123,6 +123,15 @@ fi
 db_shown=${DB_PATH:-$(env_value DB_PATH)}
 db_shown=${db_shown:-$DEFAULT_DB}
 
+# Refuse to run locally if a fixed self-hosted server is configured and healthy.
+fixed_url=${FIXED_SERVER_URL:-$(env_value FIXED_SERVER_URL)}
+fixed_url=${fixed_url%/}
+if [[ -n "$fixed_url" ]] && command -v curl >/dev/null 2>&1; then
+	if curl -fsS --max-time 3 "$fixed_url/health" 2>/dev/null | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
+		die "fixed self-hosted server is already live at $fixed_url; refusing to overwrite discovery."
+	fi
+fi
+
 # --- cloudflared -----------------------------------------------------------
 if [[ -n "${CLOUDFLARED:-}" ]]; then
 	[[ -x "$CLOUDFLARED" ]] || command -v "$CLOUDFLARED" >/dev/null 2>&1 || die "CLOUDFLARED=$CLOUDFLARED is not executable."

@@ -1,0 +1,20 @@
+{
+	"name": "netprobe",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"probe": "tsx cli.ts",
+		"test": "node --import tsx --test *.test.ts",
+		"check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@surf/shared": "workspace:*",
+		"ws": "^8.23.0"
+	},
+	"devDependencies": {
+		"@types/node": "^24.0.0",
+		"@types/ws": "^8.18.2",
+		"tsx": "^4.23.15",
+		"typescript": "^6.0.3"
+	}
+}

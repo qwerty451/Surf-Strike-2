@@ -1,6 +1,6 @@
 /** Player identity: random UUID v4, guest name and account session in localStorage. */
 import { MAX_NAME, sanitizeText } from '@surf/shared';
-import { STORAGE_KEYS, type KeyValueStore } from './storage.js';
+import { readJson, STORAGE_KEYS, writeJson, type KeyValueStore } from './storage.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -50,22 +50,20 @@ export interface StoredSession {
 }
 
 /** Session saved by a successful login/register; null if none (or storage blocked). */
-export function loadSession(store: KeyValueStore): StoredSession | null {
-	const token = store.get(STORAGE_KEYS.session);
-	const username = store.get(STORAGE_KEYS.account);
-	if (!token || !username || token.length > 128) return null;
-	return { token, username };
+export function loadSession(store: KeyValueStore, scope: string): StoredSession | null {
+	const session = readJson<Partial<StoredSession>>(store, STORAGE_KEYS.session(scope));
+	if (typeof session?.token !== 'string' || !session.token || session.token.length > 128) return null;
+	if (typeof session.username !== 'string' || !session.username) return null;
+	return { token: session.token, username: session.username };
 }
 
-export function saveSession(store: KeyValueStore, s: StoredSession): void {
-	store.set(STORAGE_KEYS.session, s.token);
-	store.set(STORAGE_KEYS.account, s.username);
+export function saveSession(store: KeyValueStore, scope: string, session: StoredSession): void {
+	writeJson(store, STORAGE_KEYS.session(scope), session);
 	store.remove(STORAGE_KEYS.guest);
 }
 
-export function clearSession(store: KeyValueStore): void {
-	store.remove(STORAGE_KEYS.session);
-	store.remove(STORAGE_KEYS.account);
+export function clearSession(store: KeyValueStore, scope: string): void {
+	store.remove(STORAGE_KEYS.session(scope));
 }
 
 export function isGuest(store: KeyValueStore): boolean {

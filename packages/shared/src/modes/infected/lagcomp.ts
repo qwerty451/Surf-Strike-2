@@ -45,7 +45,7 @@ const SNAP_DISTANCE = 1024;
 interface PoseSample extends PlayerPose {
 	/** Time the pose was recorded (ms, the clock of `InfectedGame.update`). */
 	at: number;
-	/** Sim tick it was recorded in. */
+	/** First sim tick covered by this observation. */
 	tick: number;
 }
 
@@ -122,7 +122,7 @@ export class PoseHistory {
 		this.count = 0;
 	}
 
-	/** Append the pose at time `at` and sim tick `tick`; the oldest drops out when the ring is full. */
+	/** Append the pose at time `at`, covering `tick` through the next observation’s first tick (exclusive). */
 	record(at: number, tick: number, pose: PlayerPose): void {
 		let i: number;
 		if (this.count < this.capacity) i = (this.start + this.count++) % this.capacity;

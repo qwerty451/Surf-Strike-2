@@ -240,7 +240,7 @@ const KNIFE_DROP_SPEED = 40;
 /** Grace after a teleport (stale positions in flight are ignored for fall checks). */
 const TELEPORT_GRACE_MS = 1000;
 const HISTORY_TICKS = Math.ceil(INF_HISTORY_MS / INF_STEP_MS);
-/** Poses kept per player: the current tick and HISTORY_TICKS back, plus slack for uneven update times. */
+/** Enough observations for 400 ms at 64 Hz, plus slack for uneven updates. */
 const HISTORY_SAMPLES = HISTORY_TICKS + 3;
 const round3 = (v: number) => Math.round(v * 1000) / 1000;
 /** Kill height when the map has no teleport zones. */
@@ -725,14 +725,18 @@ export class InfectedGame {
 		}
 	}
 
-	setPlayerPos(id: number, pos: InfPlayerPos): void {
+	setPlayerPos(id: number, pos: InfPlayerPos, teleported = false): void {
 		const p = this.players.get(id);
 		if (!p || !Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) return;
 		// The hitboxes turn with the yaw, their arms with the pitch: one that is not a number keeps the last one.
 		const yaw = pos.yaw === undefined || Number.isFinite(pos.yaw) ? pos.yaw : (p.pos?.yaw ?? 0);
 		const pitch = pos.pitch === undefined || Number.isFinite(pos.pitch) ? pos.pitch : (p.pos?.pitch ?? 0);
 		// The body moves with the velocity: the same, within what the mode's movement can do.
-		const [vx, vy, vz] = bodyVelocity(pos, p.pos);
+		if (teleported) {
+			p.hist.clear();
+			p.body.reset();
+		}
+		const [vx, vy, vz] = bodyVelocity(pos, teleported ? null : p.pos);
 		const onGround = pos.onGround !== false;
 		if (!p.pos) p.pos = { ...pos, yaw, pitch, vx, vy, vz, onGround };
 		else {
@@ -1056,7 +1060,7 @@ export class InfectedGame {
 	}
 
 	/** Throw the throwing knife (infected only, while playing). */
-	throwKnife(id: number, origin: Vec3, dir: Vec3, now: number): InfActionResult {
+	throwKnife(id: number, origin: Vec3, dir: Vec3, now: number, rewindMs = 0): InfActionResult {
 		const p = this.players.get(id);
 		if (!p) return { ok: false, reason: 'not playing', events: [] };
 		if (!p.alive) return { ok: false, reason: 'dead', events: [] };
@@ -1092,7 +1096,7 @@ export class InfectedGame {
 		this.knives.set(k.id, k);
 		this.pending.push({ e: 'knifeThrow', id: k.id, ownerId: id, x: k.pos.x, y: k.pos.y, z: k.pos.z, vx: vel.x, vy: vel.y, vz: vel.z });
 		// Point blank: a survivor between the eye and the spawn point is hit at once.
-		const victim = this.knifeVictim(start, aim, tr.fraction * KNIFE_SPAWN_DIST);
+		const victim = this.knifeVictim(start, aim, tr.fraction * KNIFE_SPAWN_DIST, now, rewindMs);
 		if (victim) {
 			this.removeKnife(k);
 			this.infect(victim, p, 'knife', aim);
@@ -1478,12 +1482,14 @@ export class InfectedGame {
 
 		// Sim catch-up (at most 8 steps per call; a long stall skips time).
 		if (now - this.simTime > INF_STEP_MS * 8) this.simTime = now - INF_STEP_MS * 8;
-		// The bodies first, all the way: every step of this update records them at the same time.
+		const previousTick = this.tick;
 		this.moveBodies(Math.floor((now - this.simTime) / INF_STEP_MS));
 		while (this.simTime + INF_STEP_MS <= now) {
 			this.simTime += INF_STEP_MS;
 			this.step(now);
 		}
+		// Each catch-up step sees the same client state. Record it once, at observation time.
+		if (this.tick !== previousTick) this.recordHistory(now, previousTick + 1);
 
 		if (this.phase === 'playing') {
 			const surv = this.livingSurvivors();
@@ -1639,7 +1645,6 @@ export class InfectedGame {
 			}
 			this.stepKnives();
 		}
-		this.recordHistory(now);
 	}
 
 	/** Every body towards what its player's last state says. */
@@ -1742,16 +1747,21 @@ export class InfectedGame {
 
 	/**
 	 * Closest living survivor the knife's segment (unit `u`, length `maxDist`)
-	 * passes through: the player hitboxes grown by INF_KNIFE_HIT_RADIUS. No
-	 * rewind: the knife is a projectile simulated here, so it meets the
-	 * survivors where the server has them now, as every client sees it fly.
+	 * passes through, with hitboxes grown by INF_KNIFE_HIT_RADIUS. Only the
+	 * throw's immediate spawn segment can rewind. Flight uses current poses.
 	 */
-	private knifeVictim(from: Vec3, u: Vec3, maxDist: number): InfPlayer | null {
+	private knifeVictim(from: Vec3, u: Vec3, maxDist: number, now = 0, rewindMs = 0): InfPlayer | null {
 		let best: InfPlayer | null = null;
 		let bestT = Infinity;
 		for (const s of this.livingSurvivors()) {
 			if (!s.pos) continue;
-			const t = sweepPlayer(from, u, this.poseOf(s, s.pos, this.scratch), maxDist, INF_KNIFE_HIT_RADIUS);
+			const current = this.poseOf(s, s.pos, this.scratch);
+			let pose = current;
+			if (rewindMs > 0) {
+				pose = { ...current, motion: undefined };
+				s.hist.poseAt(now - rewindMs, now, current, pose);
+			}
+			const t = sweepPlayer(from, u, pose, maxDist, INF_KNIFE_HIT_RADIUS);
 			if (t >= 0 && t < bestT) {
 				bestT = t;
 				best = s;
@@ -1850,9 +1860,9 @@ export class InfectedGame {
 	}
 
 	/** One pose sample per living player, stamped with the time of this update (lagcomp.ts). */
-	private recordHistory(now: number): void {
+	private recordHistory(now: number, firstTick: number): void {
 		for (const p of this.players.values()) {
-			if (p.alive && p.pos) p.hist.record(now, this.tick, this.poseOf(p, p.pos, this.scratch));
+			if (p.alive && p.pos) p.hist.record(now, firstTick, this.poseOf(p, p.pos, this.scratch));
 		}
 	}
 

@@ -10,10 +10,10 @@ import { INF_STEP_MS, isWeaponId, type Vec3, type WeaponId } from '@surf/shared'
 
 export type InfInput =
 	/** `tick`: the sim tick the shooter names (the mode clamps it with `clampFireTick`), or null for a live client (rewound by its ping). */
-	| { type: 'fire'; weapon: WeaponId; origin: Vec3; dir: Vec3; tick: number | null }
+	| { type: 'fire'; weapon: WeaponId; origin: Vec3; dir: Vec3; tick: number | null; renderServerTimeMs?: unknown }
 	| { type: 'reload' }
 	| { type: 'loadout'; weapon: WeaponId }
-	| { type: 'throwKnife'; origin: Vec3; dir: Vec3 }
+	| { type: 'throwKnife'; origin: Vec3; dir: Vec3; renderServerTimeMs?: unknown }
 	| { type: 'placeBeacon' }
 	| { type: 'callMoab' };
 
@@ -60,14 +60,14 @@ export function parseInfInput(msg: unknown): InfInput | null {
 			if (!isWeaponId(m.weapon) || !origin || !dir) return null;
 			const t = m.tick;
 			const tick = typeof t === 'number' && Number.isFinite(t) && t < INF_FIRE_TICK_LIVE ? t : null;
-			return { type: 'fire', weapon: m.weapon, origin, dir, tick };
+			return { type: 'fire', weapon: m.weapon, origin, dir, tick, ...(m.renderServerTimeMs === undefined ? {} : { renderServerTimeMs: m.renderServerTimeMs }) };
 		}
 		case 'loadout':
 			return isWeaponId(m.weapon) ? { type: 'loadout', weapon: m.weapon } : null;
 		case 'throwKnife': {
 			const origin = vec(m.origin, MAX_COORD);
 			const dir = vec(m.dir, MAX_DIR);
-			return origin && dir ? { type: 'throwKnife', origin, dir } : null;
+			return origin && dir ? { type: 'throwKnife', origin, dir, ...(m.renderServerTimeMs === undefined ? {} : { renderServerTimeMs: m.renderServerTimeMs }) } : null;
 		}
 		case 'reload':
 		case 'placeBeacon':

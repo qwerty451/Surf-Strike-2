@@ -476,7 +476,7 @@ export class ZombiesClient {
 	// Frame
 
 	/** Draw zombies and the viewmodel; returns the HUD view (same object while nothing changed). */
-	frame(now: number, viewmodel: boolean, speed: number): ZombiesView {
+	frame(now: number, viewmodel: boolean, speed: number, renderAt = now - INTERP_DELAY_MS): ZombiesView {
 		const r = this.host.zombieRenderer();
 		if (this.solo) {
 			this.samples.length = 0;
@@ -484,7 +484,7 @@ export class ZombiesClient {
 				const o = z.body.origin;
 				this.samples.push({ id: z.id, x: o.x, y: o.y, z: o.z, yaw: z.yaw, flags: this.solo.zombieFlags(z), hp: z.hp / 8 });
 			}
-		} else this.buffer.sample(now - INTERP_DELAY_MS, this.samples);
+		} else this.buffer.sample(renderAt, this.samples);
 		if (r) {
 			r.sync(this.samples, now);
 			r.setWeapon(this.ws.weapon);

@@ -1,7 +1,7 @@
 /** Shared helpers for server tests (node --test). Not a test file itself. */
 import { WebSocket } from 'ws';
-import type { GhostFrame, MapDef, NetState, ServerMessage, SnapshotEntry, ZombieFrame } from '@surf/shared';
-import { BIN_ZOMBIES, decodeGhostFrame, decodeSnapshot, decodeZombies, encodeState, Status } from '@surf/shared';
+import type { GhostFrame, MapDef, NetState, ServerMessage, SnapshotEntry, SnapshotFrame, ZombieFrame } from '@surf/shared';
+import { BIN_ZOMBIES, decodeGhostFrame, decodeSnapshot, decodeZombies, encodeState, PROTOCOL_VERSION, Status } from '@surf/shared';
 
 /** Staged corridor along +X: start [0,200], stage 2 [1000,1100], end [2000,2100]. */
 export function testMap(id = 'surf_test', title = 'Test'): MapDef {
@@ -68,16 +68,18 @@ export class TestClient {
 	readonly ws: WebSocket;
 	readonly messages: ServerMessage[] = [];
 	readonly snapshots: SnapshotEntry[][] = [];
+	readonly snapshotFrames: SnapshotFrame[] = [];
 	/** BIN_GHOST frames received. */
 	readonly ghosts: GhostFrame[] = [];
 	/** BIN_ZOMBIES frames received (zombies maps). */
 	readonly zombieFrames: ZombieFrame[] = [];
 	closed = false;
 	closeCode = 0;
+	private spawnSeq = 0;
 	private waiters: Array<() => void> = [];
 
-	constructor(port: number, headers?: Record<string, string>) {
-		this.ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, headers ? { headers } : undefined);
+	constructor(port: number, headers?: Record<string, string>, protocols: string[] = []) {
+		this.ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, protocols, headers ? { headers } : undefined);
 		this.ws.binaryType = 'arraybuffer';
 		this.ws.on('message', (data, isBinary) => {
 			if (isBinary && new Uint8Array(data as ArrayBuffer)[0] === BIN_ZOMBIES) {
@@ -85,11 +87,16 @@ export class TestClient {
 				if (zf) this.zombieFrames.push(zf);
 			} else if (isBinary) {
 				const snap = decodeSnapshot(data as ArrayBuffer);
-				if (snap) this.snapshots.push(snap);
+				if (snap) {
+					this.snapshotFrames.push(snap);
+					this.snapshots.push(snap.entries);
+				}
 				const ghost = snap ? null : decodeGhostFrame(data as ArrayBuffer);
 				if (ghost) this.ghosts.push(ghost);
 			} else {
-				this.messages.push(JSON.parse(Buffer.from(data as ArrayBuffer).toString('utf8')));
+				const message = JSON.parse(Buffer.from(data as ArrayBuffer).toString('utf8')) as ServerMessage;
+				if ((message.type === 'hns' || message.type === 'inf' || message.type === 'zm') && message.spawnSeq !== undefined) this.spawnSeq = message.spawnSeq;
+				this.messages.push(message);
 			}
 			this.notify();
 		});
@@ -119,7 +126,7 @@ export class TestClient {
 	}
 
 	sendState(s: NetState): void {
-		this.ws.send(encodeState(s));
+		this.ws.send(encodeState({ ...s, spawnSeq: s.spawnSeq ?? this.spawnSeq }));
 	}
 
 	/** Wait until `pred` holds (checked on every incoming frame). */
@@ -159,7 +166,7 @@ export class TestClient {
 
 	async hello(name: string, playerId: string = crypto.randomUUID(), token?: string) {
 		await this.open();
-		this.send({ type: 'hello', playerId, name, version: 1, ...(token === undefined ? {} : { token }) });
+		this.send({ type: 'hello', playerId, name, version: PROTOCOL_VERSION, ...(token === undefined ? {} : { token }) });
 		return this.waitFor('welcome');
 	}
 

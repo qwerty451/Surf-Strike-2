@@ -19,6 +19,7 @@
 		"play:tag": "pnpm --filter server exec tsx ../../tools/dev-launch.ts tag --bots 1 --fast",
 		"play:zombies": "pnpm --filter server exec tsx ../../tools/dev-launch.ts zombies --fast",
 		"play:infected": "pnpm --filter server exec tsx ../../tools/dev-launch.ts infected --bots 2 --fast",
-		"test:mode": "node tools/test-mode.mjs"
+		"test:mode": "node tools/test-mode.mjs",
+		"netprobe": "pnpm --filter netprobe probe"
 	}
 }

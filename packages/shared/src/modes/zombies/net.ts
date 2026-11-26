@@ -2,13 +2,13 @@
  * BIN_ZOMBIES (type 4): compact zombie snapshot, S→C at the snapshot rate on
  * zombies maps (docs/architecture.md#protocol-sketch).
  *
- *   u8 4, u8 version (1), u32 sim tick, u8 count, then per zombie (11 bytes):
+ *   u8 4, u8 version (2), u32 sim tick, u8 count, f64 server time, then per zombie (11 bytes):
  *   u16 id, i16 x·2, i16 y·2, i16 z·2 (half-unit precision, ±16383 units),
  *   u8 yaw (·256/360), u8 flags (ZF_*), u8 hp (0..255 = fraction of full)
  */
 export const BIN_ZOMBIES = 4;
-export const ZOMBIES_VERSION = 1;
-const HEAD = 7;
+export const ZOMBIES_VERSION = 2;
+const HEAD = 15;
 const ENTRY = 11;
 
 export interface ZombieNet {
@@ -25,12 +25,13 @@ export interface ZombieNet {
 
 export interface ZombieFrame {
 	tick: number;
+	serverTimeMs?: number;
 	zombies: ZombieNet[];
 }
 
 const clampI16 = (v: number) => Math.max(-32768, Math.min(32767, Math.round(v * 2)));
 
-export function encodeZombies(tick: number, zombies: readonly ZombieNet[]): Uint8Array {
+export function encodeZombies(tick: number, zombies: readonly ZombieNet[], serverTimeMs?: number): Uint8Array {
 	const n = Math.min(255, zombies.length);
 	const buf = new Uint8Array(HEAD + n * ENTRY);
 	const v = new DataView(buf.buffer);
@@ -38,6 +39,7 @@ export function encodeZombies(tick: number, zombies: readonly ZombieNet[]): Uint
 	v.setUint8(1, ZOMBIES_VERSION);
 	v.setUint32(2, tick >>> 0, true);
 	v.setUint8(6, n);
+	v.setFloat64(7, serverTimeMs ?? NaN, true);
 	let o = HEAD;
 	for (let i = 0; i < n; i++) {
 		const z = zombies[i]!;
@@ -76,5 +78,6 @@ export function decodeZombies(data: ArrayBuffer | Uint8Array): ZombieFrame | nul
 		});
 		o += ENTRY;
 	}
-	return { tick: v.getUint32(2, true), zombies };
+	const serverTimeMs = v.getFloat64(7, true);
+	return { tick: v.getUint32(2, true), ...(Number.isFinite(serverTimeMs) ? { serverTimeMs } : {}), zombies };
 }

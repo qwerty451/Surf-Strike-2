@@ -18,6 +18,7 @@ import type {
 	HudStateShape,
 	InfectedView,
 	MapListEntry,
+	NetGraphView,
 	RtvRequestView,
 	TagView,
 	VoteView,
@@ -95,6 +96,7 @@ export class HudState implements HudStateShape {
 
 	fps = $state(0);
 	pos = $state({ x: 0, y: 0, z: 0, pitch: 0, yaw: 0, vx: 0, vy: 0, vz: 0 });
+	netGraph = $state.raw<NetGraphView | null>(null);
 
 	cvars = $state.raw<Record<string, number | string>>({});
 }
