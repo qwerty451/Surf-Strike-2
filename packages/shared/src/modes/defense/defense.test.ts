@@ -254,6 +254,37 @@ describe('game flow', () => {
 		expect(s.g.playerView(3)!.status).toBe('alive');
 	});
 
+	it('leaving and coming back in the same game (spectate toggle) keeps gold, weapons and kills', () => {
+		const s = setup({ startGold: 2000, plan: () => ['walker'] }, [1, 2]);
+		const pad = map.defense!.pads[0]!.pos;
+		s.place(1, { x: pad.x, y: pad.y, z: 0 });
+		s.g.act(1, { a: 'pad', pad: 0, op: 'build', turret: 'sentry' }, s.now());
+		s.g.act(1, { a: 'buy', item: 'weapon:smg' }, s.now());
+		const gold = s.g.playerView(1)!.gold;
+		expect(gold).toBe(2000 - 300 - ZD_SHOP.weapons.smg);
+		s.g.syncPlayers([2], s.now());
+		s.run(STEP);
+		s.g.syncPlayers([1, 2], s.now());
+		const evs = s.run(STEP);
+		expect(s.g.playerView(1)).toMatchObject({ status: 'alive', gold, weapons: ['pistol', 'smg'] });
+		expect(of(evs, 'spawn').find((e) => e.id === 1)!.reason).toBe('join');
+		// During a wave: waits, then comes back with the same gold.
+		toWave(s, [1, 2]);
+		s.g.syncPlayers([2], s.now());
+		s.run(STEP);
+		s.g.syncPlayers([1, 2], s.now());
+		s.run(STEP);
+		expect(s.g.playerView(1)!.status).toBe('waiting');
+		s.g.zombies.clear();
+		s.run(1200);
+		s.g.zombies.clear();
+		s.run(STEP * 2);
+		expect(s.g.phase).toBe('build');
+		// Back from the next build phase with the same gold; the wave's bonus went to player 2 only (still in the game).
+		expect(s.g.playerView(1)).toMatchObject({ status: 'alive', gold, weapons: ['pistol', 'smg'] });
+		expect(s.g.playerView(2)!.gold).toBe(2000 + ZD_GOLD.waveBonus(1));
+	});
+
 	it('everyone leaves: waiting', () => {
 		const s = setup();
 		s.g.syncPlayers([], s.now());

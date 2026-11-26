@@ -313,6 +313,8 @@ export interface DefenseZombie {
 
 interface ZdPlayer {
 	id: number;
+	/** Game (`round`) the gold, weapons and upgrades belong to. */
+	game: number;
 	inGame: boolean;
 	alive: boolean;
 	hp: number;
@@ -357,6 +359,8 @@ interface Pad {
 	nextFireAt: number;
 	retargetAt: number;
 	firedTick: number;
+	/** Frost: zombies in its field this step. */
+	frosting: boolean;
 }
 
 interface Shell {
@@ -437,6 +441,8 @@ export class DefenseGame {
 	private readonly openings: Opening[];
 	private readonly pads: Pad[];
 	private readonly players = new Map<number, ZdPlayer>();
+	/** Players who left (or spectate) during this game: coming back keeps their gold, weapons and kills. */
+	private readonly parked = new Map<number, ZdPlayer>();
 	private readonly rng: () => number;
 	private readonly firstBuildMs: number;
 	private readonly buildMs: number;
@@ -502,7 +508,8 @@ export class DefenseGame {
 			target: null,
 			nextFireAt: 0,
 			retargetAt: 0,
-			firedTick: -Infinity
+			firedTick: -Infinity,
+			frosting: false
 		}));
 		// Walk the spawn zones by their angle around the base, so consecutive spawns come from all sides.
 		let cx = 0;
@@ -552,10 +559,21 @@ export class DefenseGame {
 	/** Active (non-spectating) players. New ones join; missing ones leave. */
 	syncPlayers(ids: Iterable<number>, now: number): void {
 		const want = new Set(ids);
-		for (const id of [...this.players.keys()]) if (!want.has(id)) this.players.delete(id);
+		for (const [id, p] of [...this.players]) {
+			if (want.has(id)) continue;
+			this.players.delete(id);
+			p.pos = null;
+			p.repairing = false;
+			p.ready = false;
+			p.inGame = false;
+			p.alive = false;
+			this.parked.set(id, p);
+		}
 		for (const id of want) {
 			if (this.players.has(id)) continue;
-			const p = this.newPlayer(id);
+			const back = this.parked.get(id);
+			this.parked.delete(id);
+			const p = back && back.game === this.round ? back : this.newPlayer(id);
 			this.players.set(id, p);
 			if (this.phase === 'build') {
 				p.inGame = true;
@@ -568,6 +586,7 @@ export class DefenseGame {
 	private newPlayer(id: number): ZdPlayer {
 		const p: ZdPlayer = {
 			id,
+			game: this.round,
 			inGame: false,
 			alive: false,
 			hp: ZD_PLAYER_HP,
@@ -594,6 +613,7 @@ export class DefenseGame {
 	}
 
 	private resetLoadout(p: ZdPlayer): void {
+		p.game = this.round;
 		p.gold = this.startGold;
 		p.kills = 0;
 		p.deaths = 0;
@@ -1055,6 +1075,7 @@ export class DefenseGame {
 		this.shells = [];
 		this.history = [];
 		this.resetBarricades();
+		this.parked.clear();
 		for (const pad of this.pads) Object.assign(pad, { type: null, level: 0, owner: null, target: null, yaw: pad.def.yaw, pitch: 0 });
 		let i = 0;
 		for (const p of this.players.values()) {
@@ -1074,8 +1095,8 @@ export class DefenseGame {
 			p.ready = false;
 			p.plankGold = 0;
 			if (!p.inGame) {
-				// Joined during the wave or the summary: plays from now, with the start loadout.
-				this.resetLoadout(p);
+				// Joined during the wave or the summary: plays from now (with the start loadout, unless back in the same game).
+				if (p.game !== this.round) this.resetLoadout(p);
 				p.inGame = true;
 				this.spawnPlayer(p, i++, now, 'join');
 			} else if (!p.alive) this.spawnPlayer(p, i++, now, 'respawn');
@@ -1298,6 +1319,7 @@ export class DefenseGame {
 
 	private applyFrost(): void {
 		for (const z of this.zombies.values()) z.frost = 1;
+		for (const pad of this.pads) pad.frosting = false;
 		if (this.phase !== 'wave') return;
 		for (const pad of this.pads) {
 			if (pad.type !== 'frost') continue;
@@ -1310,7 +1332,7 @@ export class DefenseGame {
 				any = true;
 			}
 			pad.target = null;
-			if (any) pad.firedTick = this.tick;
+			pad.frosting = any;
 		}
 	}
 
@@ -1821,7 +1843,7 @@ export class DefenseGame {
 				pad: i,
 				yaw: pad.yaw,
 				pitch: pad.pitch,
-				flags: (this.tick - pad.firedTick < ZD_FIRE_FLAG_TICKS ? ZDT_FIRED : 0) | (pad.target !== null ? ZDT_ACTIVE : 0),
+				flags: (this.tick - pad.firedTick < ZD_FIRE_FLAG_TICKS ? ZDT_FIRED : 0) | (pad.target !== null || pad.frosting ? ZDT_ACTIVE : 0),
 				target: pad.target ?? 0
 			});
 		}
