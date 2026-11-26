@@ -30,6 +30,7 @@ import {
 	ZDT_FIRED,
 	ZD_FIRE_FLAG_TICKS,
 	zdEventRoute,
+	zdBossCount,
 	zdIsBossWave,
 	type ClientMessage,
 	type Cvars,
@@ -119,6 +120,13 @@ export const ZD_KIND_LOOK: Readonly<Record<ZdZombieKind, { scale: number; tint: 
 	brute: { scale: ZD_ZOMBIES.brute.scale, tint: 0xc07468 },
 	boss: { scale: ZD_ZOMBIES.boss.scale, tint: 0xa07cc8, glow: 0x2a0a40 }
 };
+/** Wave start banner: "Wave 10 · 2 Behemoths are coming". */
+export function bossWaveText(wave: number): string {
+	const n = zdBossCount(wave);
+	if (n === 0) return `Wave ${wave}`;
+	return n === 1 ? `Wave ${wave} · a ${ZD_ZOMBIES.boss.label} is coming` : `Wave ${wave} · ${n} ${ZD_ZOMBIES.boss.label}s are coming`;
+}
+
 const FROST_TINT = 0x9fd8ff;
 const FROST_GLOW = 0x0a2a40;
 
@@ -618,7 +626,7 @@ export class DefenseClient {
 				} else if (ev.phase === 'wave') {
 					this.killed.clear();
 					this.closeMenu();
-					this.flash = { text: zdIsBossWave(ev.wave) ? `Wave ${ev.wave} · a ${ZD_ZOMBIES.boss.label} is coming` : `Wave ${ev.wave}`, at: now, tone: zdIsBossWave(ev.wave) ? 'boss' : 'bad' };
+					this.flash = { text: bossWaveText(ev.wave), at: now, tone: zdIsBossWave(ev.wave) ? 'boss' : 'bad' };
 					this.host.sound('round');
 				}
 				this.publishBoard(now);
@@ -763,7 +771,7 @@ export class DefenseClient {
 				this.rev++;
 				break;
 			case 'boss':
-				this.flash = { text: `The ${ZD_ZOMBIES.boss.label} is here · it smashes barricades in one go`, at: now, tone: 'boss' };
+				this.flash = { text: `A ${ZD_ZOMBIES.boss.label} is here · it smashes barricades in one go`, at: now, tone: 'boss' };
 				break;
 			case 'cleared':
 				this.flash = { text: `Wave ${ev.wave} cleared · +${ev.bonus} gold`, at: now, tone: 'good' };

@@ -88,7 +88,7 @@ export function mockDefenseView(scene: DefenseMockScene, t0: number, page: ZdSho
 		prompt: phase === 'build' && !menu ? { text: 'E: build a turret here', active: false } : scene === 'wave' ? { text: 'Repairing the east window · 3/6', active: true } : null,
 		flash:
 			scene === 'boss'
-				? { text: 'The Behemoth is here · it smashes barricades in one go', at: t0, tone: 'boss' }
+				? { text: 'A Behemoth is here · it smashes barricades in one go', at: t0, tone: 'boss' }
 				: scene === 'build'
 					? { text: 'Wave 6 cleared · +200 gold', at: t0, tone: 'good' }
 					: null,

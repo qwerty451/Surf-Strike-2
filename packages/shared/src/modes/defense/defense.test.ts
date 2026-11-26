@@ -19,7 +19,10 @@ import {
 	ZD_TURRETS,
 	ZD_ZOMBIES,
 	zdHpScale,
+	zdAliveCap,
+	zdBossCount,
 	zdIsBossWave,
+	ZD_SPAWN_MIN_MS,
 	zdSpawnInterval,
 	zdTurretCost,
 	zdTurretRefund,
@@ -94,8 +97,17 @@ describe('rules', () => {
 
 	it('wave size, hp and spawn rate scale with the wave and the players', () => {
 		expect(zdWaveCount(1, 1)).toBe(12);
-		expect(zdWaveCount(5, 1)).toBe(28);
-		expect(zdWaveCount(1, 3)).toBe(24);
+		expect(zdWaveCount(5, 1)).toBe(37);
+		expect(zdWaveCount(10, 1)).toBe(83);
+		expect(zdWaveCount(1, 3)).toBe(25);
+		// Alive at once grows with the wave, so the team is overwhelmed in the end.
+		expect(zdAliveCap(1, 1)).toBe(18);
+		expect(zdAliveCap(10, 1)).toBe(54);
+		expect(zdAliveCap(25, 1)).toBe(ZD_MAX_ZOMBIES);
+		expect(zdAliveCap(10, 4)).toBe(85);
+		expect(zdSpawnInterval(1, 1)).toBe(1100);
+		expect(zdSpawnInterval(1, 11)).toBe(550);
+		expect(zdSpawnInterval(8, 30)).toBe(ZD_SPAWN_MIN_MS);
 		expect(zdHpScale(1)).toBe(1);
 		expect(zdHpScale(11)).toBeCloseTo(2.2);
 		expect(zdZombieHp('walker', 1, 4)).toBe(8);
@@ -119,6 +131,14 @@ describe('rules', () => {
 		expect(w5.slice(0, 3)).not.toContain('brute');
 		expect(zdIsBossWave(10)).toBe(true);
 		expect(zdIsBossWave(11)).toBe(false);
+		// One more boss every 5 waves, spread through the wave.
+		expect([4, 5, 10, 15, 20].map(zdBossCount)).toEqual([0, 1, 2, 3, 4]);
+		const w15 = zdWavePlan(15, 1, lcg());
+		const at = w15.flatMap((k, i) => (k === 'boss' ? [i] : []));
+		expect(at).toHaveLength(3);
+		expect(w15).toHaveLength(zdWaveCount(15, 1) + 3);
+		expect(at[1]! - at[0]!).toBeGreaterThan(20);
+		expect(at[2]! - at[1]!).toBeGreaterThan(20);
 	});
 
 	it('turret costs ×1.5 per level, sell refunds half', () => {
@@ -314,7 +334,7 @@ describe('spawning', () => {
 		expect(sides.size).toBe(4);
 		s.run(10_000);
 		expect(s.g.zombies.size).toBeLessThanOrEqual(6);
-		expect(ZD_MAX_ZOMBIES).toBe(40);
+		expect(ZD_MAX_ZOMBIES).toBe(96);
 	});
 
 	it('boss spawn announces itself; HP of the wave', () => {

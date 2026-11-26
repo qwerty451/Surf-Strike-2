@@ -80,6 +80,7 @@ import {
 	ZD_WAVE_MAX_SECS,
 	ZD_WEAPONS,
 	ZD_ZOMBIES,
+	zdAliveCap,
 	zdSpawnInterval,
 	zdTurretCost,
 	zdTurretRefund,
@@ -110,6 +111,8 @@ const STALL_MOVE = 48;
 /** Outside zombies chase a player this close in sight instead of heading for an opening. */
 const OUTSIDE_CHASE = 320;
 const REPATH_MS = 1000;
+/** Height difference (units) up to which a zombie inside runs straight at a player it sees; more than a stair step or two. */
+const DIRECT_DZ = 40;
 const RETHINK_OPENING_MS = 3000;
 const TELEPORT_GRACE_MS = 1000;
 
@@ -175,7 +178,7 @@ export interface ZdStateView {
 	left: number;
 	/** Zombies killed this game (players and turrets). */
 	kills: number;
-	/** The boss's health 0..1 while one is alive, else null. */
+	/** Health 0..1 of all living bosses together while any is alive, else null. */
 	boss: number | null;
 	/** By `MapDef.defense.openings` index. */
 	openings: ZdOpeningView[];
@@ -1251,8 +1254,9 @@ export class DefenseGame {
 		if (this.queue.length === 0 || this.simTime < this.nextSpawnAt) return;
 		const living = this.living().length;
 		const due = Math.max(this.nextSpawnAt, this.simTime - ZD_STEP_MS);
-		this.nextSpawnAt = due + zdSpawnInterval(Math.max(1, this.waveIds.length)) * this.spawnScale;
-		if (this.zombies.size >= this.maxZombies || living === 0) return;
+		const players = Math.max(1, this.waveIds.length);
+		this.nextSpawnAt = due + zdSpawnInterval(players, this.wave) * this.spawnScale;
+		if (this.zombies.size >= Math.min(this.maxZombies, zdAliveCap(this.wave, players)) || living === 0) return;
 		const zones = this.info.spawnZones;
 		for (let tries = 0; tries < zones.length; tries++) {
 			const zi = this.zoneOrder[this.zoneCursor++ % this.zoneOrder.length]!;
@@ -1538,8 +1542,11 @@ export class DefenseGame {
 			const dy = tp.y - o.y;
 			const dz = tp.z - o.z;
 			const dist = Math.hypot(dx, dy);
-			let direct = dist < 160 && Math.abs(dz) < 80;
-			if (!direct && dist < 1400 && Math.abs(dz) < 100) {
+			// Straight at the player only on about the same level: from a stair flight or
+			// the yard below a wall-walk the straight line walks off the side, so those
+			// follow the nav graph (stairs) instead.
+			let direct = dist < 160 && Math.abs(dz) < DIRECT_DZ;
+			if (!direct && dist < 1400 && Math.abs(dz) < DIRECT_DZ) {
 				if (think) z.los = this.sight(o, tp);
 				direct = z.los;
 			}
@@ -1866,8 +1873,15 @@ export class DefenseGame {
 		const players: ZdPlayerView[] = [];
 		for (const p of this.players.values()) players.push(this.playerView(p.id)!);
 		players.sort((a, b) => b.kills - a.kills || a.id - b.id);
-		let boss: number | null = null;
-		for (const z of this.zombies.values()) if (z.kind === 'boss') boss = Math.max(0, z.hp) / z.maxHp;
+		// All living bosses together (several on later boss waves).
+		let bossHp = 0;
+		let bossMax = 0;
+		for (const z of this.zombies.values()) {
+			if (z.kind !== 'boss') continue;
+			bossHp += Math.max(0, z.hp);
+			bossMax += z.maxHp;
+		}
+		const boss = bossMax > 0 ? bossHp / bossMax : null;
 		const timeLeft = this.phase === 'build' || this.phase === 'ended' ? Math.max(0, (this.endsAt - now) / 1000) : 0;
 		return {
 			phase: this.phase,

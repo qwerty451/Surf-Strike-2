@@ -94,12 +94,12 @@ export const ZD_ZOMBIES: Readonly<Record<ZdZombieKind, ZdZombieDef>> = Object.fr
 
 /** Head damage multiplier for zombies a headshot does not kill outright. */
 export const ZD_HEAD_MULT = 3;
-/** Alive at once at most (server tick, bandwidth, client draw calls). */
-export const ZD_MAX_ZOMBIES = 40;
+/** Alive at once at most, whatever the wave (server tick, bandwidth, client draw calls; Zombie Run's cap). */
+export const ZD_MAX_ZOMBIES = 96;
 /** Spawn interval for one player; divided by `zdPlayerScale`. */
 export const ZD_SPAWN_MS = 1100;
-export const ZD_SPAWN_MIN_MS = 200;
-/** Every this-many waves one boss joins the wave. */
+export const ZD_SPAWN_MIN_MS = 120;
+/** Every this-many waves bosses join the wave: one in wave 5, two in wave 10, three in wave 15, ... */
 export const ZD_BOSS_EVERY = 5;
 /** Boss HP grows by this share per extra player. */
 export const ZD_BOSS_HP_PER_PLAYER = 0.6;
@@ -122,13 +122,27 @@ export function zdHpScale(wave: number): number {
 	return 1 + 0.12 * (Math.max(1, wave) - 1);
 }
 
-/** Zombies in a wave (the boss not counted): (8 + 4·wave) × the player factor, rounded. */
+/** Zombies in a wave (bosses not counted): (8 + 4·wave + 0.35·wave²) × the player factor, rounded. */
 export function zdWaveCount(wave: number, players: number): number {
-	return Math.round((8 + 4 * Math.max(1, wave)) * zdPlayerScale(players));
+	const w = Math.max(1, wave);
+	return Math.round((8 + 4 * w + 0.35 * w * w) * zdPlayerScale(players));
+}
+
+/**
+ * Zombies alive at once in a wave: (14 + 4·wave) × √(player factor), at most
+ * ZD_MAX_ZOMBIES. Grows with every wave, so a team is overwhelmed in the end.
+ */
+export function zdAliveCap(wave: number, players: number): number {
+	return Math.min(ZD_MAX_ZOMBIES, Math.round((14 + 4 * Math.max(1, wave)) * Math.sqrt(zdPlayerScale(players))));
 }
 
 export function zdIsBossWave(wave: number): boolean {
 	return wave > 0 && wave % ZD_BOSS_EVERY === 0;
+}
+
+/** Bosses in a wave: wave / 5 on every 5th wave (1, 2, 3, ...), else 0. */
+export function zdBossCount(wave: number): number {
+	return zdIsBossWave(wave) ? wave / ZD_BOSS_EVERY : 0;
 }
 
 /** Share of runners and brutes in a wave (the rest are walkers). */
@@ -159,7 +173,10 @@ export function zdWavePlan(wave: number, players: number, rng: () => number): Zd
 		const j = out.findIndex((k, idx) => idx >= 3 && k !== 'brute');
 		if (j >= 0) [out[i], out[j]] = [out[j]!, out[i]!];
 	}
-	if (zdIsBossWave(wave)) out.splice(Math.floor(out.length / 2), 0, 'boss');
+	// Bosses spread evenly through the wave (one: in the middle).
+	const bosses = zdBossCount(wave);
+	const len = out.length;
+	for (let k = bosses; k >= 1; k--) out.splice(Math.floor((len * k) / (bosses + 1)), 0, 'boss');
 	return out;
 }
 
@@ -170,8 +187,10 @@ export function zdZombieHp(kind: ZdZombieKind, wave: number, players: number): n
 }
 
 /** Spawn interval (ms) for `players` in the game. */
-export function zdSpawnInterval(players: number): number {
-	return Math.max(ZD_SPAWN_MIN_MS, ZD_SPAWN_MS / zdPlayerScale(players));
+/** Spawn interval: 1100 ms / player factor, 5 % shorter per wave down to 30 % (at least 120 ms). */
+export function zdSpawnInterval(players: number, wave = 1): number {
+	const faster = Math.max(0.3, 1 - 0.05 * (Math.max(1, wave) - 1));
+	return Math.max(ZD_SPAWN_MIN_MS, (ZD_SPAWN_MS / zdPlayerScale(players)) * faster);
 }
 
 // ---------------------------------------------------------------------------
