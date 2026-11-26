@@ -220,6 +220,7 @@ export function mockTournamentView(scene: TrnMockScene, now: number, entrants = 
 		state: online ? s : null,
 		selfId: TRN_MOCK_SELF,
 		bet,
+		betResult: scene === 'betwon' ? { text: 'Bet won · +40 coins', tone: 'won', at: now - 200 } : null,
 		alive: true,
 		knifeOnly,
 		weapon: sniper ? 'sniper' : 'knife',

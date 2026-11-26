@@ -56,6 +56,10 @@ const ZERO: Vec3 = { x: 0, y: 0, z: 0 };
 /** `fire.tick`: no rewind tick of our own; the server uses its own history (as Infected). */
 export const TRN_FIRE_TICK_NOW = 2 ** 31 - 1;
 const FLASH_MS = 3200;
+/** A bet outcome shows this long, whatever the bets move on to (ms). */
+const BET_RESULT_MS = 6000;
+/** After a spawn, a state may still be older than it: role and life from states wait this long (ms). */
+const SPAWN_GRACE_MS = 1500;
 /** Share of the sniper's aim after which its scope overlay comes in. */
 const SCOPE_OVERLAY_FROM = 0.6;
 /** My tracers start this far ahead of the eye, beside and below it (units). */
@@ -114,6 +118,9 @@ export class TournamentClient {
 	/** My accepted bet and the latest bet note, per match. */
 	private myBet: { match: number; pick: number } | null = null;
 	private betNote: { match: number; note: NonNullable<TrnBetPanel['note']> } | null = null;
+	/** Latest bet outcome (`betResult`): shown for a while even after the bets moved on. */
+	private betResult: TournamentView['betResult'] = null;
+	private spawnAt = -Infinity;
 	private lastFrame = 0;
 	private view: TournamentView | null = null;
 	private viewKey = '';
@@ -382,16 +389,22 @@ export class TournamentClient {
 			this.myBet = null;
 			this.betNote = null;
 		}
+		// The spawn event is authoritative: a state from before it must not undo it.
+		if (now - this.spawnAt < SPAWN_GRACE_MS) {
+			this.viewKey = '';
+			return;
+		}
 		const role = trnRole(m, this.me);
 		const duel = m.duel;
 		const match = duelMatch(m);
 		if (role === 'duelist' && duel && match) {
+			// A missed duel spawn: arm from the state.
 			if (this.role !== 'duelist') this.arm('duelist');
 			const hp = match.a === this.me ? duel.hp[0] : duel.hp[1];
 			this.alive = hp > 0;
 			if (duel.freeze > 0) this.frozenUntil = Math.max(this.frozenUntil, now + duel.freeze * 1000);
-		} else if (this.role === 'duelist') {
-			// The duel is over for me (missed spawn): back to the knife.
+		} else if (this.role === 'duelist' && m.phase !== 'duel') {
+			// The duel is over for me (missed deck spawn): back to the knife.
 			this.arm('spectator');
 			this.alive = true;
 		}
@@ -416,6 +429,7 @@ export class TournamentClient {
 		switch (ev.e) {
 			case 'spawn': {
 				if (ev.id !== me) break;
+				this.spawnAt = now;
 				this.host.teleport(ev.pos, ev.yaw);
 				this.alive = true;
 				this.frozenUntil = ev.freezeSecs > 0 ? now + ev.freezeSecs * 1000 : 0;
@@ -504,9 +518,12 @@ export class TournamentClient {
 					this.betNote = { match: ev.match, note: { text: betAcceptedText(this.nameOf(ev.pick)), tone: 'ok', at: now } };
 				} else this.betNote = { match: ev.match, note: { text: betRefusalText(ev.reason), tone: 'bad', at: now } };
 				break;
-			case 'betResult':
-				this.betNote = { match: ev.match, note: { text: betResultText(ev.outcome, ev.payout), tone: ev.outcome === 'won' ? 'won' : ev.outcome === 'lost' ? 'lost' : 'refund', at: now } };
+			case 'betResult': {
+				const note = { text: betResultText(ev.outcome, ev.payout), tone: ev.outcome === 'won' ? 'won' : ev.outcome === 'lost' ? 'lost' : 'refund', at: now } as const;
+				this.betNote = { match: ev.match, note };
+				this.betResult = note;
 				break;
+			}
 			case 'champion': {
 				const self = ev.id === me;
 				this.setFlash(championText(this.nameOf(ev.id), self), 'gold', now, `Prize ${ev.prize} coin${ev.prize === 1 ? '' : 's'} · ${ev.entrants} entrants`);
@@ -544,6 +561,10 @@ export class TournamentClient {
 		}
 		if (this.flash && now - this.flash.at > FLASH_MS) {
 			this.flash = null;
+			this.viewKey = '';
+		}
+		if (this.betResult && now - this.betResult.at > BET_RESULT_MS) {
+			this.betResult = null;
 			this.viewKey = '';
 		}
 		const feed = liveKillFeed(this.feed, now);
@@ -626,6 +647,7 @@ export class TournamentClient {
 			state: online ? s : null,
 			selfId: this.me,
 			bet: online ? this.betPanel() : null,
+			betResult: online ? this.betResult : null,
 			alive: this.alive,
 			knifeOnly: this.role !== 'duelist',
 			weapon: def.id,

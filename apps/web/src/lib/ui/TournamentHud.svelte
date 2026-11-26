@@ -37,6 +37,9 @@
 	const bracketTitle = $derived(
 		t.phase === 'ended' ? `Tournament ${t.tournament} · final standings` : `Tournament ${t.tournament}${t.roundLabel ? ` · ${t.roundLabel}` : ''}`
 	);
+	const resultOpacity = $derived(t.betResult ? fadeOpacity(now - t.betResult.at, 5000, 800) : 0);
+	/** The outcome shows on its own when the panel shows another match or none. */
+	const lone = $derived(t.betResult && resultOpacity > 0 && t.bet?.note?.text !== t.betResult.text ? t.betResult : null);
 	const noteOpacity = $derived(t.bet?.note ? fadeOpacity(now - t.bet.note.at, t.bet.note.tone === 'ok' ? 600000 : 5000, 800) : 0);
 </script>
 
@@ -124,6 +127,12 @@
 
 	{#if showBracket && t.state}
 		<Bracket view={t.state} selfId={t.selfId} title={bracketTitle} />
+	{/if}
+
+	{#if lone}
+		<div class="bet result ss-panel ss-shadow" class:raised={t.bet !== null} style:opacity={resultOpacity}>
+			<div class="note {lone.tone}">{lone.text}</div>
+		</div>
 	{/if}
 
 	{#if t.bet}
@@ -508,6 +517,9 @@
 		box-sizing: border-box;
 		font-size: calc(14px * var(--hud-scale));
 		pointer-events: auto;
+	}
+	.bet.result.raised {
+		bottom: calc(200px * var(--hud-scale));
 	}
 	.bet.open {
 		border-color: rgba(242, 163, 58, 0.6);

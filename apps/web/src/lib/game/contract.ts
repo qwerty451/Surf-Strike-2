@@ -364,6 +364,8 @@ export interface TournamentView {
 	state: TrnStateView | null;
 	selfId: number;
 	bet: TrnBetPanel | null;
+	/** My latest bet outcome, shown for a few seconds even after the bets moved on to the next duel. */
+	betResult: { text: string; tone: 'won' | 'lost' | 'refund'; at: number } | null;
 	// Weapons of the local player
 	alive: boolean;
 	/** Spectators carry the knife only. */

@@ -228,6 +228,39 @@ describe('tournament client mode', () => {
 		expect(mode.slot(1, 1000)).toBe(false);
 	});
 
+	it('a bet outcome stays visible after the bets moved on (or ended)', () => {
+		const { mode, state, view, ev } = setup();
+		state(trnState({ duel: { match: 0, round: 1, hp: [100, 100], freeze: 5 }, bets: { match: 0, open: true, count: [0, 0] } }));
+		ev({ e: 'bet', ok: true, match: 0, pick: 1 }, 1100);
+		// The duel ended: bets now on the next match, then none at all.
+		state(trnState({ phase: 'bracket', duel: null, bets: { match: 2, open: true, count: [0, 0] } }), 2000);
+		ev({ e: 'betResult', match: 0, outcome: 'won', payout: 40 }, 2000);
+		mode.frame(2100);
+		expect(view().betResult).toMatchObject({ text: 'Bet won · +40 coins', tone: 'won' });
+		state(trnState({ phase: 'ended', duel: null, bets: null }), 2200);
+		mode.frame(2300);
+		expect(view().bet).toBeNull();
+		expect(view().betResult?.text).toBe('Bet won · +40 coins');
+		mode.frame(9000);
+		expect(view().betResult).toBeNull();
+	});
+
+	it('a spawn wins over an older state', () => {
+		const { mode, state, view, ev } = setup();
+		state(trnState({ phase: 'bracket', duel: null }), 1000);
+		ev(spawn('duelist'), 1100);
+		// The state of the duel arrives after the spawn, first still the bracket, then a stale dead hp.
+		state(trnState({ phase: 'bracket', duel: null }), 1150);
+		state(trnState({ duel: { match: 1, round: 2, hp: [100, 0], freeze: 0 } }), 1200);
+		mode.frame(1300);
+		expect(view()).toMatchObject({ knifeOnly: false, weapon: 'sniper', alive: true });
+		expect(mode.moveCvars(1300)).not.toBeNull();
+		// Later states count again: the duel is over, back to the knife.
+		state(trnState({ phase: 'bracket', duel: null }), 5000);
+		mode.frame(5000);
+		expect(view()).toMatchObject({ knifeOnly: true, weapon: 'knife' });
+	});
+
 	it('the bracket shows by itself between duels and at the end', () => {
 		const { mode, state, view, ev } = setup();
 		state(trnState({ phase: 'bracket', duel: null }));
