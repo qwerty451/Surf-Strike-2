@@ -39,6 +39,18 @@ describe('binds', () => {
 		expect(b.get('e')).toBeUndefined();
 		expect(b.get('f')).toBe('beacon');
 	});
+	it('gives an older table the Zombie Defense keys (5-9, B shop, F ready) once', () => {
+		const store = memoryStore();
+		writeJson(store, STORAGE_KEYS.binds, { w: '+forward', e: 'beacon', n: 'moab' });
+		writeJson(store, `${STORAGE_KEYS.binds}.offered`, ['e', 'n']);
+		const a = new Binds(store);
+		expect(a.get('5')).toBe('vote 5');
+		expect(a.get('9')).toBe('vote 9');
+		expect(a.get('b')).toBe('shop');
+		expect(a.get('f')).toBe('ready');
+		a.unbind('b');
+		expect(new Binds(store).get('b')).toBeUndefined();
+	});
 	it('gives a table saved after the E offer the new N moab bind once, and keeps E', () => {
 		const store = memoryStore();
 		writeJson(store, STORAGE_KEYS.binds, { w: '+forward', e: 'beacon' });

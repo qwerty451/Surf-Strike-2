@@ -95,7 +95,9 @@ export const RATE = {
 	chat: { limit: 2, kick: 20 },
 	json: { limit: 60, kick: 300 },
 	shop: { limit: 8, kick: 100 },
-	casino: { limit: 5, kick: 100 }
+	casino: { limit: 5, kick: 100 },
+	/** Zombie Defense actions (repair hold, shop, pads, ready, weapon swap). */
+	zd: { limit: 20, kick: 200 }
 } as const;
 
 export interface LobbyOptions {
@@ -189,7 +191,7 @@ interface Client {
 	lastMessageAt: number;
 	/** Worn cosmetics (docs/economy.md#shop); the default look for guests. */
 	loadout: Loadout;
-	rate: { state: Window; spawnAck: Window; chat: Window; json: Window; shop: Window; casino: Window };
+	rate: { state: Window; spawnAck: Window; chat: Window; json: Window; shop: Window; casino: Window; zd: Window };
 	helloTimer: NodeJS.Timeout | null;
 	closed: boolean;
 }
@@ -585,7 +587,7 @@ export class Lobby {
 			lastPongAt: 0,
 			lastMessageAt: 0,
 			loadout: emptyLoadout(),
-			rate: { state: new Window(), spawnAck: new Window(), chat: new Window(), json: new Window(), shop: new Window(), casino: new Window() },
+			rate: { state: new Window(), spawnAck: new Window(), chat: new Window(), json: new Window(), shop: new Window(), casino: new Window(), zd: new Window() },
 			helloTimer: null,
 			closed: false
 		};
@@ -733,6 +735,13 @@ export class Lobby {
 				// Zombies/infected weapons and hide-and-seek knife (docs/modes.md); the mode validates every field.
 				if (!c.spectating) this.mode.message?.(c, msg);
 				return;
+			case 'zd': {
+				// Zombie Defense actions (docs/modes.md#zombie-defense); the mode validates every field.
+				const k = c.rate.zd.hit(t);
+				if (k > RATE.zd.kick) return this.kick(c, 'action flood');
+				if (k <= RATE.zd.limit && !c.spectating) this.mode.message?.(c, msg);
+				return;
+			}
 			case 'boxOpen':
 			case 'boxRevealed':
 			case 'shopBuy':
@@ -1392,7 +1401,7 @@ export class Lobby {
 	}
 
 	private send(c: Client, msg: ServerMessage): void {
-		if ((msg.type === 'hns' || msg.type === 'inf' || msg.type === 'zm') && msg.ev.e === 'spawn' && msg.ev.id === c.id) {
+		if ((msg.type === 'hns' || msg.type === 'inf' || msg.type === 'zm' || msg.type === 'zd') && msg.ev.e === 'spawn' && msg.ev.id === c.id) {
 			c.pendingSpawn = 'pos' in msg.ev ? msg.ev.pos : { x: msg.ev.x, y: msg.ev.y, z: msg.ev.z };
 			c.state = null;
 			c.spawnSeq = c.spawnSeq === 0xffff ? 1 : c.spawnSeq + 1;

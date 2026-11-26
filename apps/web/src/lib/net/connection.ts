@@ -2,7 +2,7 @@
  * Connection manager: discovery, connect, retry every 10 s while offline,
  * manual `connect <url>` / `disconnect` (docs/architecture.md#client-connect-flow).
  */
-import type { GhostFrame, ServerMessage, SnapshotFrame, ZombieFrame } from '@surf/shared';
+import type { DefenseFrame, GhostFrame, ServerMessage, SnapshotFrame, ZombieFrame } from '@surf/shared';
 import { NetClient } from './client.js';
 import { DEV_FALLBACK_URL, discover, RETRY_MS, sessionScope, toWsUrl } from './discovery.js';
 
@@ -17,6 +17,8 @@ export interface ConnectionHandlers {
 	zombies?(frame: ZombieFrame, arrivalMs: number): void;
 	/** Inbound/outbound wire bytes (for `net_graph`). */
 	traffic?(dir: 'in' | 'out', bytes: number, atMs: number): void;
+	/** BIN_DEFENSE frame (docs/modes.md#zombie-defense). */
+	defense?(frame: DefenseFrame, arrivalMs: number): void;
 	/** `code`: WebSocket close code (4002 = same player/account connected elsewhere). */
 	closed(wasOpen: boolean, url: string, code: number): void;
 	/** Discovery found no server (still solo). */
@@ -127,6 +129,7 @@ export class Connection {
 			ghost: (f) => this.h.ghost?.(f),
 			zombies: (f, t) => this.h.zombies?.(f, t),
 			traffic: (dir, bytes, at) => this.h.traffic?.(dir, bytes, at),
+			defense: (f, t) => this.h.defense?.(f, t),
 			close: (wasOpen, code) => {
 				if (this.client === client) this.client = null;
 				this.h.closed(wasOpen, target, code);

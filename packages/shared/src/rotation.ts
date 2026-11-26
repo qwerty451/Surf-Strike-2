@@ -26,7 +26,7 @@
  */
 import type { VoteOption } from './protocol.ts';
 
-export const MAP_DURATION = 15 * 60;
+export const MAP_DURATION = 45 * 60;
 export const EXTEND_DURATION = 10 * 60;
 export const MAX_EXTENDS = 2;
 export const VOTE_AT = 30; // seconds left
@@ -37,8 +37,8 @@ export const CHANGE_COUNTDOWN = 5;
  * (too few maps in a category) are filled from the other categories, up to
  * MAX_VOTE_MAPS distinct maps. The timed vote adds "Extend" after them.
  */
-export const VOTE_MAP_SLOTS: Readonly<Record<string, number>> = Object.freeze({ surf: 2, bhop: 1, tag: 1, zombies: 1, infected: 1, hns: 1 });
-export const MAX_VOTE_MAPS = 7;
+export const VOTE_MAP_SLOTS: Readonly<Record<string, number>> = Object.freeze({ surf: 2, bhop: 1, tag: 1, zombies: 1, infected: 1, hns: 1, defense: 1 });
+export const MAX_VOTE_MAPS = 8;
 /** An RTV request passes once a third of the non-spectating players voted yes: ceil(voters / 3), min 1. */
 export const RTV_RATIO = 1 / 3;
 export const RTV_BLOCK = 20; // seconds after map start

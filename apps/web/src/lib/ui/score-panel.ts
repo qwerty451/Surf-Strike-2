@@ -28,7 +28,9 @@ const AREAS: Partial<Record<GameModeId, PanelArea>> = {
 	zombies: { top: BELOW_KILL_FEED, bottom: { px: 34, scaled: 74 } },
 	// Above health, weapon, the perk track and its toast.
 	infected: { top: BELOW_KILL_FEED, bottom: { px: 34, scaled: 186 } },
-	hns: { top: BELOW_KILL_FEED, bottom: BOTTOM }
+	hns: { top: BELOW_KILL_FEED, bottom: BOTTOM },
+	// Above gold, health and the weapon with its key row.
+	defense: { top: BELOW_KILL_FEED, bottom: { px: 34, scaled: 92 } }
 };
 
 export function panelArea(mode: GameModeId): PanelArea {

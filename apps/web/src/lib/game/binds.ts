@@ -19,13 +19,20 @@ export const DEFAULT_BINDS: Readonly<Record<string, string>> = Object.freeze({
 	'2': 'vote 2',
 	'3': 'vote 3',
 	'4': 'vote 4',
+	'5': 'vote 5',
+	'6': 'vote 6',
+	'7': 'vote 7',
+	'8': 'vote 8',
+	'9': 'vote 9',
 	m: 'spectate',
 	r: 'restart',
 	'`': 'toggleconsole',
 	mouse1: '+attack',
 	mouse2: '+attack2',
 	e: 'beacon',
-	n: 'moab'
+	n: 'moab',
+	b: 'shop',
+	f: 'ready'
 });
 
 /**
@@ -33,7 +40,7 @@ export const DEFAULT_BINDS: Readonly<Record<string, string>> = Object.freeze({
  * one gets it once (when the key is free and the command unbound); the
  * offered list is stored next to the binds so a later unbind sticks.
  */
-export const ADDED_DEFAULTS: readonly string[] = Object.freeze(['e', 'n']);
+export const ADDED_DEFAULTS: readonly string[] = Object.freeze(['e', 'n', '5', '6', '7', '8', '9', 'b', 'f']);
 const OFFERED_KEY = `${STORAGE_KEYS.binds}.offered`;
 
 /** Keys that can never be bound (browser/UI reserved). */

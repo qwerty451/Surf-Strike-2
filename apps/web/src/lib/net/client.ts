@@ -1,12 +1,15 @@
 /** Thin transport-agnostic client: JSON text frames, binary snapshots and ghost frames. */
 import {
+	BIN_DEFENSE,
 	BIN_GHOST,
 	BIN_SNAPSHOT,
 	BIN_ZOMBIES,
 	SERVER_ID_PROTOCOL,
+	decodeDefense,
 	decodeGhostFrame,
 	decodeSnapshot,
 	decodeZombies,
+	type DefenseFrame,
 	type ZombieFrame,
 	type ClientMessage,
 	type GhostFrame,
@@ -25,6 +28,8 @@ export interface NetClientHandlers {
 	zombies?(frame: ZombieFrame, arrivalMs: number): void;
 	/** Inbound/outbound wire bytes (for `net_graph`). */
 	traffic?(dir: 'in' | 'out', bytes: number, atMs: number): void;
+	/** BIN_DEFENSE frame (Zombie Defense maps, docs/modes.md#zombie-defense). */
+	defense?(frame: DefenseFrame, arrivalMs: number): void;
 	/** `code` is the close code (0 when the socket never existed or was closed locally). */
 	close(wasOpen: boolean, code: number): void;
 }
@@ -87,6 +92,11 @@ export class NetClient {
 				if (kind === BIN_ZOMBIES) {
 					const frame = decodeZombies(data);
 					if (frame) this.h.zombies?.(frame, now);
+					return;
+				}
+				if (kind === BIN_DEFENSE) {
+					const frame = decodeDefense(data);
+					if (frame) this.h.defense?.(frame, now);
 					return;
 				}
 				if (kind !== BIN_SNAPSHOT) return;

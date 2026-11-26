@@ -18,14 +18,14 @@ export function voteLabel(o: VoteOption, lookup: (id: string) => MapNames | unde
 	return mapLabel(o.mapId, lookup);
 }
 
-/** Highest number key that votes while a map vote is open (7 maps + extend). */
-export const MAP_VOTE_KEYS = 8;
+/** Highest number key that votes while a map vote is open (8 maps + extend). */
+export const MAP_VOTE_KEYS = 9;
 
 export type VoteKeyRoute = { kind: 'mapVote'; option: number } | { kind: 'rtv'; yes: boolean } | null;
 
 /**
  * Number keys while a vote is up, ahead of (and instead of) their binds:
- * - map vote open: 1–7 vote (keys above the option count do nothing);
+ * - map vote open: 1–9 vote (keys above the option count do nothing);
  * - RTV request open: 1 = yes, 2 = no; other keys keep their binds;
  * - otherwise null: the key's bind runs (e.g. zombies weapon slots).
  * A map vote and a request are never open together; the map vote wins.

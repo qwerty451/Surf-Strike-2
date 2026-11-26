@@ -47,7 +47,8 @@ export interface GatedWorld extends CollisionWorld {
 	setOpen(index: number, open: boolean): void;
 }
 
-export function gatedWorld(base: CollisionWorld, gates: readonly ZombieGate[]): GatedWorld {
+/** `gates`: any solid boxes (Zombie Run gates, Zombie Defense barricades). */
+export function gatedWorld(base: CollisionWorld, gates: readonly Pick<ZombieGate, 'min' | 'max'>[]): GatedWorld {
 	const worlds = gates.map((g) => buildCollisionWorld({ brushes: [{ type: 'box', min: g.min, max: g.max, material: 'gate' }] }));
 	const open = gates.map(() => false);
 	function trace(start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3): Trace {

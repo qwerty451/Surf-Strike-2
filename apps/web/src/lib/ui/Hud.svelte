@@ -25,6 +25,7 @@
 	import DesktopOnly from '#lib/ui/DesktopOnly.svelte';
 	import TagHud from '#lib/ui/TagHud.svelte';
 	import ZombiesHud from '#lib/ui/ZombiesHud.svelte';
+	import DefenseHud from '#lib/ui/DefenseHud.svelte';
 	import InfectedHud from '#lib/ui/InfectedHud.svelte';
 	import BoxNews from '#lib/ui/BoxNews.svelte';
 	import AwardPopups from '#lib/ui/AwardPopups.svelte';
@@ -109,9 +110,19 @@
 		{/if}
 
 		{#if hud.zombies}<ZombiesHud z={hud.zombies} {now} />{/if}
+		{#if hud.defense}
+			<DefenseHud
+				d={hud.defense}
+				{now}
+				interactive={!hud.pointerLocked}
+				side={!hud.vote}
+				onpick={(i) => api.modeUi({ kind: 'pick', index: i })}
+				onclose={() => api.modeUi({ kind: 'close' })}
+			/>
+		{/if}
 		{#if hud.infected}<InfectedHud inf={hud.infected} {now} />{/if}
 		{#if showScorePanel}<ScorePanel mode={hud.gameMode} input={scoreInput} unofficial={race && hud.unofficial} />{/if}
-		{#if !hud.zombies?.scoped && !hud.infected?.scoped && !hud.hns?.blindfold && crosshairOpacity(hud.infected?.aimT) > 0}<Crosshair cvars={hud.cvars} spreadDeg={hud.infected?.spreadDeg} opacity={crosshairOpacity(hud.infected?.aimT)} />{/if}
+		{#if !hud.zombies?.scoped && !hud.defense?.scoped && !hud.infected?.scoped && !hud.hns?.blindfold && crosshairOpacity(hud.infected?.aimT) > 0}<Crosshair cvars={hud.cvars} spreadDeg={hud.infected?.spreadDeg} opacity={crosshairOpacity(hud.infected?.aimT)} />{/if}
 
 		<div class="below-crosshair">
 			{#if clickHint}

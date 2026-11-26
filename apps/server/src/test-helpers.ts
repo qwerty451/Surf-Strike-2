@@ -1,7 +1,7 @@
 /** Shared helpers for server tests (node --test). Not a test file itself. */
 import { WebSocket } from 'ws';
-import type { GhostFrame, MapDef, NetState, ServerMessage, SnapshotEntry, SnapshotFrame, ZombieFrame } from '@surf/shared';
-import { BIN_ZOMBIES, decodeGhostFrame, decodeSnapshot, decodeZombies, encodeState, PROTOCOL_VERSION, Status } from '@surf/shared';
+import type { DefenseFrame, GhostFrame, MapDef, NetState, ServerMessage, SnapshotEntry, SnapshotFrame, ZombieFrame } from '@surf/shared';
+import { BIN_DEFENSE, BIN_ZOMBIES, decodeDefense, decodeGhostFrame, decodeSnapshot, decodeZombies, encodeState, PROTOCOL_VERSION, Status } from '@surf/shared';
 
 /** Staged corridor along +X: start [0,200], stage 2 [1000,1100], end [2000,2100]. */
 export function testMap(id = 'surf_test', title = 'Test'): MapDef {
@@ -73,6 +73,8 @@ export class TestClient {
 	readonly ghosts: GhostFrame[] = [];
 	/** BIN_ZOMBIES frames received (zombies maps). */
 	readonly zombieFrames: ZombieFrame[] = [];
+	/** BIN_DEFENSE frames received (Zombie Defense maps). */
+	readonly defenseFrames: DefenseFrame[] = [];
 	closed = false;
 	closeCode = 0;
 	private spawnSeq = 0;
@@ -85,6 +87,9 @@ export class TestClient {
 			if (isBinary && new Uint8Array(data as ArrayBuffer)[0] === BIN_ZOMBIES) {
 				const zf = decodeZombies(data as ArrayBuffer);
 				if (zf) this.zombieFrames.push(zf);
+			} else if (isBinary && new Uint8Array(data as ArrayBuffer)[0] === BIN_DEFENSE) {
+				const df = decodeDefense(data as ArrayBuffer);
+				if (df) this.defenseFrames.push(df);
 			} else if (isBinary) {
 				const snap = decodeSnapshot(data as ArrayBuffer);
 				if (snap) {
@@ -95,7 +100,7 @@ export class TestClient {
 				if (ghost) this.ghosts.push(ghost);
 			} else {
 				const message = JSON.parse(Buffer.from(data as ArrayBuffer).toString('utf8')) as ServerMessage;
-				if ((message.type === 'hns' || message.type === 'inf' || message.type === 'zm') && message.spawnSeq !== undefined) this.spawnSeq = message.spawnSeq;
+				if ((message.type === 'hns' || message.type === 'inf' || message.type === 'zm' || message.type === 'zd') && message.spawnSeq !== undefined) this.spawnSeq = message.spawnSeq;
 				this.messages.push(message);
 			}
 			this.notify();

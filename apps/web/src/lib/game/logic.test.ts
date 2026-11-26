@@ -109,10 +109,10 @@ describe('vote labels', () => {
 
 describe('vote key routing', () => {
 	const none = { mapVoteOptions: 0, rtvRequestOpen: false };
-	it('map vote open: 1-8 vote, ahead of binds', () => {
-		const s = { mapVoteOptions: 8, rtvRequestOpen: false };
-		for (let k = 1; k <= 8; k++) expect(routeVoteKey(String(k), s)).toEqual({ kind: 'mapVote', option: k });
-		expect(routeVoteKey('9', s)).toBeNull();
+	it('map vote open: 1-9 vote (8 maps + extend), ahead of binds', () => {
+		const s = { mapVoteOptions: 9, rtvRequestOpen: false };
+		for (let k = 1; k <= 9; k++) expect(routeVoteKey(String(k), s)).toEqual({ kind: 'mapVote', option: k });
+		expect(routeVoteKey('0', s)).toBeNull();
 		expect(routeVoteKey('w', s)).toBeNull();
 		// Fewer options: higher keys are still swallowed (no weapon switch mid-vote).
 		expect(routeVoteKey('6', { mapVoteOptions: 4, rtvRequestOpen: false })).toEqual({ kind: 'mapVote', option: 6 });

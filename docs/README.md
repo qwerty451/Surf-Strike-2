@@ -1,6 +1,6 @@
 # Surf Strike 2 — Design Docs
 
-Browser-based surf and bhop game with Source-engine movement. One shared lobby, no main menu (the page loads straight into a map), four original maps rotating by vote every 15 minutes.
+Browser-based surf and bhop game with Source-engine movement. One shared lobby, no main menu (the page loads straight into a map), four original maps rotating by vote every 45 minutes.
 
 Status: design agreed 2026-11-21. Milestones 0–10 implemented 2026-11-21; milestone 11 (deploy, playtest) pending.
 
@@ -73,7 +73,7 @@ Weapon models: `tools/models/procedural/build.sh [id…]` rebuilds the script-bu
 | Settings | Developer console (`~`) plus an Esc menu (Change map, Settings, Account) |
 | Admin | Esc › Admin for accounts in `ADMIN_USERNAMES` (unset by default; by account, never display name): enable/disable maps, force map change, ban/unban (account, guest key + IP, close 4009) |
 | HUD | CS2-era layout and feel, original art, open fonts |
-| Map vote | 15:00 per map; vote at 0:30 left; 3 other maps + "Extend 10 min"; `!rtv` at 60% |
+| Map vote | 45:00 per map; vote at 0:30 left; 3 other maps + "Extend 10 min"; `!rtv` at 60% |
 | Maps | original: surf (aurora, ember, skyrend, hadal: all rated easy), bhop (meadow easy, circuit / reliquary / rimefall hard), tag (quayside), Zombie Run (lowtide); themed, stylised |
 | Lobby | 32 players max, no player collision, animated low-poly characters with name tags ([characters.md](characters.md)) |
 | Platform | Desktop browsers, mouse + keyboard, pointer lock |

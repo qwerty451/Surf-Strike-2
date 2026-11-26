@@ -9,15 +9,15 @@
  */
 import { BHOP_CVARS, SURF_CVARS, type Cvars } from '../cvars.ts';
 import type { MapDef } from '../maps/types.ts';
-import { HNS_SCORE, INFECTED_SCORE, RACE_SCORE, TAG_SCORE, ZOMBIES_SCORE, type ModeScoreDef } from './score.ts';
+import { DEFENSE_SCORE, HNS_SCORE, INFECTED_SCORE, RACE_SCORE, TAG_SCORE, ZOMBIES_SCORE, type ModeScoreDef } from './score.ts';
 
-export type GameModeId = 'surf' | 'bhop' | 'tag' | 'zombies' | 'infected' | 'hns';
+export type GameModeId = 'surf' | 'bhop' | 'tag' | 'zombies' | 'infected' | 'hns' | 'defense';
 
 /**
  * Rule family. 'race': RunTracker timer, start/end/stage/checkpoint zones,
  * run validation and leaderboards. Any other family has its own rules module.
  */
-export type ModeFamily = 'race' | 'tag' | 'coop' | 'infected' | 'hns';
+export type ModeFamily = 'race' | 'tag' | 'coop' | 'infected' | 'hns' | 'defense';
 
 export interface GameModeDef {
 	id: GameModeId;
@@ -127,6 +127,15 @@ export const GAME_MODES: Readonly<Record<GameModeId, GameModeDef>> = Object.free
 		cvars: HNS_CVARS,
 		minPlayers: 2,
 		score: HNS_SCORE
+	},
+	defense: {
+		id: 'defense',
+		label: 'Zombie Defense',
+		description: 'Co-op: barricade the base, build turrets and hold out against endless, growing waves of zombies.',
+		family: 'defense',
+		cvars: ZOMBIES_CVARS,
+		minPlayers: 1,
+		score: DEFENSE_SCORE
 	}
 });
 
@@ -160,3 +169,4 @@ export * from './hns.ts';
 export * from './tag.ts';
 export * from './zombies/index.ts';
 export * from './infected/index.ts';
+export * from './defense/index.ts';

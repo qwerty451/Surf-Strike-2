@@ -1,5 +1,6 @@
 /** Client gamemode factory (docs/modes.md). */
 import { hnsSpawns, modeOf, randomSpawn, type MapDef, type ModeFamily, type Spawn } from '@surf/shared';
+import { DefenseMode } from './defense.js';
 import { HnsMode } from './hns.js';
 import { InfectedMode } from './infected.js';
 import { RaceMode } from './race.js';
@@ -20,7 +21,8 @@ const CLIENT_MODES: Readonly<Record<ModeFamily, ClientModeDef>> = Object.freeze(
 	tag: { create: (host) => new TagMode(host), spawn: randomSpawn },
 	coop: { create: (host) => new ZombiesMode(host), spawn: (map) => map.spawn },
 	infected: { create: (host) => new InfectedMode(host), spawn: randomSpawn },
-	hns: { create: (host) => new HnsMode(host), spawn: (map) => pick(hnsSpawns(map).hiders) }
+	hns: { create: (host) => new HnsMode(host), spawn: (map) => pick(hnsSpawns(map).hiders) },
+	defense: { create: (host) => new DefenseMode(host), spawn: (map) => map.spawn }
 });
 
 /** The mode of the host's map. */

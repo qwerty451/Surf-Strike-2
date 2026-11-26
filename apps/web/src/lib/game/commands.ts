@@ -37,6 +37,10 @@ export interface CommandContext {
 	beacon?(): void;
 	/** Infected: call an earned M.O.A.B.. Optional: other hosts ignore it. */
 	moab?(): void;
+	/** Zombie Defense: open or close the shop. Optional: other hosts ignore it. */
+	shop?(): void;
+	/** Zombie Defense: ready for the next wave. Optional: other hosts ignore it. */
+	ready?(): void;
 	back(): void;
 	rtv(): void;
 	changeMap(id: string): void;
@@ -106,14 +110,16 @@ export function registerCommands(con: DevConsole, ctx: CommandContext): void {
 	reg('messagemode', 'Open chat', () => ctx.openChat());
 	reg('say', 'say <text>: send chat', (_a, raw) => ctx.say(raw));
 	reg('toggleconsole', 'Toggle the console', () => ctx.toggleConsole());
-	reg('vote', 'vote <n>: vote in the map vote (1-7), or 1 = yes / 2 = no on an RTV request', (args) => {
+	reg('vote', 'vote <n>: vote in the map vote (1-9), or 1 = yes / 2 = no on an RTV request', (args) => {
 		const n = Number(args[0]);
 		if (Number.isInteger(n) && n >= 1) ctx.vote(n);
 	});
 	reg('spectate', 'Toggle spectating; spectate <name>', (_a, raw) => ctx.spectate(raw));
 	reg('restart', 'Back to start, timer reset (!r)', () => ctx.restart());
-	reg('beacon', 'Infected: plant a respawn beacon at your feet (E)', () => ctx.beacon?.());
+	reg('beacon', 'Infected: plant a respawn beacon at your feet; Zombie Defense: hold to repair a barricade, or open a turret pad (E)', () => ctx.beacon?.());
 	reg('moab', 'Infected: call your earned M.O.A.B. (N)', () => ctx.moab?.());
+	reg('shop', 'Zombie Defense: open or close the shop in the build phase (B)', () => ctx.shop?.());
+	reg('ready', 'Zombie Defense: ready for the next wave (F)', () => ctx.ready?.());
 	reg('back', 'Back to current stage or checkpoint (!back)', () => ctx.back());
 	reg('rtv', 'Request a map vote (!rtv)', () => ctx.rtv());
 	reg(

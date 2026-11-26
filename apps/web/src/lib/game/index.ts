@@ -48,6 +48,7 @@ const inertApi: GameApi = {
 	crashBuild: noop,
 	shopEquip: noop,
 	createPreview: () => null,
+	modeUi: () => {},
 	itemPicture: () => Promise.resolve(null),
 	rtvVote: noop,
 	admin: noop

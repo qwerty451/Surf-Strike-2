@@ -7,6 +7,7 @@ import type { CosmeticSlot, Loadout, RarityId } from './cosmetics.ts';
 import type { Cvars } from './cvars.ts';
 import type { MapDef } from './maps/types.ts';
 import type { GameModeId } from './modes/index.ts';
+import type { ZdAction, ZdEvent, ZdStateView } from './modes/defense/game.ts';
 import type { HnsEvent, HnsStateView } from './modes/hns.ts';
 import type { InfEvent, InfStateView } from './modes/infected/game.ts';
 import type { TagPhase, TagScore } from './modes/tag.ts';
@@ -161,7 +162,12 @@ export interface HnsModeState extends HnsStateView {
 	mode: 'hns';
 }
 
-export type ModeState = TagModeState | ZombiesModeState | InfectedModeState | HnsModeState;
+/** Zombie Defense game state (docs/modes.md#zombie-defense). */
+export interface DefenseModeState extends ZdStateView {
+	mode: 'defense';
+}
+
+export type ModeState = TagModeState | ZombiesModeState | InfectedModeState | HnsModeState | DefenseModeState;
 
 /** One line of a map's leaderboard. */
 export interface RecordEntry {
@@ -238,6 +244,13 @@ export type ClientMessage =
 	 * (lag-compensated against the hiders' recent positions).
 	 */
 	| { type: 'knife'; origin: Vec3; dir: Vec3; renderServerTimeMs?: number }
+	/**
+	 * Zombie Defense (docs/modes.md#zombie-defense): ready, repair hold (E),
+	 * weapon swap, gold shop purchase, turret pad action. Answered with a
+	 * `zd` `result` event (none for repair). Shots and reloads use `fire`
+	 * (tick: BIN_DEFENSE sim tick) and `reload`.
+	 */
+	| { type: 'zd'; act: ZdAction }
 	/** Shop (docs/economy.md#shop): answered with `shopResult` and, on success, a fresh `shop`. */
 	| { type: 'shopBuy'; item: string }
 	/** Buy and open a loot box: answered with `boxResult`. Only when `shop.box` was sent. */
@@ -444,6 +457,8 @@ export type ServerMessage =
 	| { type: 'inf'; ev: InfEvent; spawnSeq?: number }
 	/** Hide and seek event (spawn/teleport to that player; swing, found, round flow to everyone). */
 	| { type: 'hns'; ev: HnsEvent; spawnSeq?: number }
+	/** Zombie Defense event (phases, spawns, hits, kills, planks, turrets, shop results, wave cleared, game over). */
+	| { type: 'zd'; ev: ZdEvent; spawnSeq?: number }
 	| { type: 'timeLeft'; mapTimeLeft: number }
 	/** `richest`: the accounts with the most coins, richest first, online or not (absent on older servers). */
 	| { type: 'scoreboard'; rows: ScoreRow[]; richest?: RichEntry[] }
@@ -561,6 +576,7 @@ export const BIN_SNAPSHOT = 2;
  * `getGhost` and pushed on a new record. Layout and helpers: ./ghost.ts.
  */
 export const BIN_GHOST = 3;
+/** BIN_ZOMBIES = 4 (modes/zombies/net.ts), BIN_DEFENSE = 5 (modes/defense/net.ts). */
 
 export interface NetState {
 	/** Last applied server spawn, echoed in every client state. Zero means none. */

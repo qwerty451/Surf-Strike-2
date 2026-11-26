@@ -23,18 +23,19 @@ A basic shop item costs 30 coins and a loot box 80. With the rates below that is
 
 No mode should pay clearly more per hour than another at the same skill. Where a mode can be repeated quickly, the awards decay.
 
-Estimates for the race modes and Zombie Run, playtime included:
+Estimates for the race modes, Zombie Run and Zombie Defense, playtime included:
 
 | Mode | Average player | Very good player | From |
 | --- | --- | --- | --- |
 | Surf and bhop | 75–90 | 110–155 without changing the map early, up to about 190 with `!rtv` | Clean runs of 30–50 s (easy surf), 45 s (bhop), 55 s and 89 s (hard surf), 15-minute map sessions |
 | Zombie Run | 105–145 | 155–175 | 16–18 rounds per hour, nearly all won; average 22–35 per hour, mostly lost at gate 2–4 (bots with human aim errors in the real rules) |
+| Zombie Defense | 87–94 | 128–170 | Solo games lost at wave 6–10 / reaching wave 20–30, shortest possible waves (a model in `economy.test.ts`, not bots; [Zombie Defense](#zombie-defense)) |
 
 Both ranges are at multiplier ×1.0. In the multiplayer modes a full lobby pays up to twice as much.
 
 ## Player multiplier
 
-Owner's rule. In Zombie Run, Infected, Hide and seek and Tag every award, including the cash bag, is multiplied by the number of active players on the server when it is paid. It does not apply to surf, bhop or playtime.
+Owner's rule. In Zombie Run, Zombie Defense, Infected, Hide and seek and Tag every award, including the cash bag, is multiplied by the number of active players on the server when it is paid. It does not apply to surf, bhop or playtime.
 
 | Active players | 1–2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 and up |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -83,6 +84,16 @@ The mode has no numbered rounds; the gates are its steps. One run is one round o
 - More survivors mean more zombies, so there is no solo bonus or penalty.
 
 The first draft only let the evac decay (100, 75, 50, 25 %). A round that is won takes 200 seconds on Low Tide (150 of them are gate countdowns), so that paid a good player over 350 points per hour, and an average one about 240.
+
+## Zombie Defense
+
+Account coins, not the gold of the mode. One wave is one round of points.
+
+- **Wave *n* cleared:** 1 point for waves 1-3, then +1 every 4 waves (wave 4: 2, wave 8: 3, wave 12: 4), at most 5 from wave 16 on (`DEFENSE_PAY.wave`). Paid to every player who was in the game when the wave started and is still connected, dead or alive. Players who join during a wave wait for the next one and are not paid for it. An account connected twice is paid once.
+- **Repeats** of the same wave number on the same map within one map session and within 60 minutes whatever the sessions: 100 %, 50 %, 25 %, then 10 %, rounded up to whole points (so waves 1-3 always pay 1). A lost game starts again from wave 1, so playing the first waves over and over pays little.
+- A lost wave pays nothing. `MIN_ACTIVE` is 1 (solo play pays), and the player multiplier applies, as in the other co-op and multiplayer modes; more players also mean more zombies.
+
+Estimate (solo, ×1.0, base points without playtime, shortest waves the rules allow, `economy.test.ts`): a game lost around wave 6-10 with full build phases pays 47-54 per hour (average player, 87-94 with playtime); reaching wave 20-30 pays 88-109 (128-149 with playtime), and with Ready pressed at once up to 130 (170). Losing on purpose at wave 2-3 and restarting pays 54-70 per hour. Real waves take longer, since every zombie has to be killed.
 
 ## Tag
 
