@@ -309,12 +309,47 @@ export const HNS_SCORE: ModeScoreDef = {
 	panel: { list: 'standing', subtitle: round, maxRows: 8, summary: [COINS] }
 };
 
-/** Zombie Defense (placeholder until the mode's own columns: wave, gold). */
+/** Zombie Defense: kills, gold, alive/dead/joining; the panel shows the wave and what is left of it. */
 export const DEFENSE_SCORE: ModeScoreDef = {
-	columns: [KILLS, STATUS, PING],
-	compare: (a, b) => desc(a.kills, b.kills) || byName(a, b),
+	columns: [
+		KILLS,
+		{ id: 'gold', label: 'Gold', num: true, width: 5.6, panel: true, text: (r) => int(r.score) },
+		{
+			id: 'status',
+			label: 'Status',
+			num: false,
+			width: 7.4,
+			minor: true,
+			// The mode state knows "joins next wave"; Status alone does not.
+			text: (r, { state }) => {
+				if (r.spectating) return 'Spectating';
+				const p = state?.mode === 'defense' ? state.players.find((x) => x.id === r.id) : undefined;
+				if (!p) return r.status === Status.Spectating ? 'Spectating' : NO_VALUE;
+				return p.status === 'alive' ? 'Alive' : p.status === 'dead' ? 'Dead' : 'Next wave';
+			}
+		},
+		PING
+	],
+	compare: (a, b) => desc(a.kills, b.kills) || desc(a.score, b.score) || byName(a, b),
 	mark: () => null,
-	panel: { list: 'standing', subtitle: round, maxRows: 8, summary: [COINS] }
+	panel: {
+		list: 'standing',
+		subtitle: (i) => (i.state?.mode === 'defense' && i.state.wave > 0 ? `Wave ${i.state.wave}` : ''),
+		maxRows: 8,
+		summary: [
+			{
+				id: 'wave',
+				line: ({ state }) => {
+					if (state?.mode !== 'defense') return null;
+					if (state.phase === 'build') return { label: `Wave ${state.wave}`, text: formatClock(state.timeLeft), note: 'build' };
+					if (state.phase === 'wave') return { label: 'Zombies left', text: String(state.left), note: `wave ${state.wave}` };
+					if (state.phase === 'ended') return { label: 'Reached', text: `Wave ${state.wave}`, tone: 'bad' };
+					return null;
+				}
+			},
+			COINS
+		]
+	}
 };
 
 // ---------------------------------------------------------------------------

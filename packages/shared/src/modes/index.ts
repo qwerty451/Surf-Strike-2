@@ -169,3 +169,4 @@ export * from './hns.ts';
 export * from './tag.ts';
 export * from './zombies/index.ts';
 export * from './infected/index.ts';
+export * from './defense/index.ts';

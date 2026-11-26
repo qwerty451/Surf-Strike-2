@@ -20,7 +20,7 @@ export const pts = (points: number): number => Math.round(points * POINTS_SCALE)
 // ---------------------------------------------------------------------------
 
 /** Modes whose awards grow with the active players (never surf, bhop or playtime). */
-export const MULTIPLIER_MODES: readonly GameModeId[] = ['zombies', 'infected', 'hns', 'tag'];
+export const MULTIPLIER_MODES: readonly GameModeId[] = ['zombies', 'infected', 'hns', 'tag', 'defense'];
 
 /** ×1.0 in tenths. */
 export const MULT_ONE = 10;
@@ -106,6 +106,14 @@ export const ZOMBIES_PAY = Object.freeze({
 	turnedKill: pts(1)
 });
 
+/** Zombie Defense (docs/economy.md#zombie-defense): account coins per wave cleared, not the in-mode gold. */
+export const DEFENSE_PAY = Object.freeze({
+	/** Clearing wave n (1-based) while in the game, before the repeat decay: 1 for waves 1-3, +1 every 4 waves, at most 5 (wave 16 on). */
+	wave: (n: number): number => pts(Math.min(5, 1 + Math.floor(Math.max(1, n) / 4))),
+	/** The same wave number on the same map in one map session, and within `REPEAT_MS`, percent (stays at the last). */
+	repeat: Object.freeze([100, 50, 25, 10])
+});
+
 export const TAG_PAY = Object.freeze({
 	chased: Object.freeze({ points: pts(1), everyMs: 20_000 }),
 	tag: pts(1),
@@ -179,7 +187,7 @@ export const INFECTED_PAY = Object.freeze({
 export const HUNT_RANGE = Object.freeze({ tagChase: 500, hnsChase: 600, hnsView: 2000 });
 
 /** Active players a mode needs before it pays anything but playtime. */
-export const MIN_ACTIVE: Readonly<Partial<Record<GameModeId, number>>> = Object.freeze({ tag: 3, hns: 3, infected: 4 });
+export const MIN_ACTIVE: Readonly<Partial<Record<GameModeId, number>>> = Object.freeze({ tag: 3, hns: 3, infected: 4, defense: 1 });
 
 export interface AwardDef {
 	/** Shown in the popup and the Coins view. */
@@ -207,6 +215,8 @@ const defs = {
 	zombiesGate: { label: 'Gate passed' },
 	zombiesEvac: { label: 'Evacuated' },
 	zombiesKill: { label: 'Survivor caught', perRound: pts(3) },
+
+	defenseWave: { label: 'Wave cleared' },
 
 	tagChased: { label: 'Being chased', perRound: pts(3), pair: true },
 	tagTag: { label: 'Tag', perRound: pts(3) },
