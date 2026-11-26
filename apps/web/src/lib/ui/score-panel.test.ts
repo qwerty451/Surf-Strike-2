@@ -31,7 +31,7 @@ describe('fitPanel', () => {
 		expect(fitPanel(0, 0, 'surf', 2).hidden).toBe(true);
 	});
 	it('the kill feed modes start below a full feed', () => {
-		for (const mode of ['zombies', 'infected', 'hns'] as const) expect(panelArea(mode).top.px).toBeGreaterThan(panelArea('surf').top.px);
+		for (const mode of ['zombies', 'infected', 'hns', 'defense'] as const) expect(panelArea(mode).top.px).toBeGreaterThan(panelArea('surf').top.px);
 	});
 	it('hud scale is the one of theme.css', () => {
 		expect([500, 1080, 1620, 4000].map(hudScale)).toEqual([0.85, 1, 1.5, 1.6]);

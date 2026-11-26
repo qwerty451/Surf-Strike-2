@@ -168,6 +168,8 @@ export class DefenseClient {
 	private lastTurretSound = new Map<number, number>();
 	private state: ZdStateView | null = null;
 	private stateAt = 0;
+	/** Bumped when an event changes the state between two modeStates (the HUD view key). */
+	private rev = 0;
 	private status: ZdPlayerStatus = 'waiting';
 	private hp = ZD_PLAYER_HP;
 	private maxHp = ZD_PLAYER_HP;
@@ -603,6 +605,7 @@ export class DefenseClient {
 		switch (ev.e) {
 			case 'phase': {
 				if (this.state) this.state = { ...this.state, phase: ev.phase, wave: ev.wave, round: ev.round };
+				this.rev++;
 				if (ev.phase === 'build') {
 					this.killed.clear();
 					this.buffer.clear();
@@ -704,6 +707,7 @@ export class DefenseClient {
 			case 'plank': {
 				const s = this.state;
 				if (s) this.state = { ...s, openings: s.openings.map((o, i) => (i === ev.opening ? { ...o, planks: ev.planks } : o)) };
+				this.rev++;
 				this.publishBoard(now);
 				const at = this.openingSpot(ev.opening);
 				if (ev.by === null) this.host.sound('beaconSmash', at);
@@ -717,6 +721,7 @@ export class DefenseClient {
 			case 'turret': {
 				const s = this.state;
 				if (s) this.state = { ...s, pads: s.pads.map((p, i) => (i === ev.pad ? { type: ev.type, level: ev.level, owner: ev.op === 'sell' ? null : ev.op === 'build' ? ev.by : p.owner } : p)) };
+				this.rev++;
 				this.publishBoard(now);
 				this.host.sound(ev.op === 'sell' ? 'handle' : 'beacon', this.padSpot(ev.pad));
 				if (ev.by !== me && ev.type && ev.op !== 'sell')
@@ -739,6 +744,7 @@ export class DefenseClient {
 				if (ev.id !== me) break;
 				const s = this.state;
 				if (s) this.state = { ...s, players: s.players.map((p) => (p.id === me ? { ...p, gold: ev.gold } : p)) };
+				this.rev++;
 				this.lastGold = ev.gold;
 				if (ev.act === 'weapon') break;
 				if (!ev.ok) {
@@ -754,6 +760,7 @@ export class DefenseClient {
 			}
 			case 'ready':
 				if (this.state) this.state = { ...this.state, players: this.state.players.map((p) => (p.id === ev.id ? { ...p, ready: true } : p)) };
+				this.rev++;
 				break;
 			case 'boss':
 				this.flash = { text: `The ${ZD_ZOMBIES.boss.label} is here · it smashes barricades in one go`, at: now, tone: 'boss' };
@@ -870,6 +877,7 @@ export class DefenseClient {
 			s?.phase,
 			s?.wave,
 			this.stateAt,
+			this.rev,
 			this.hp,
 			this.status,
 			this.held,
