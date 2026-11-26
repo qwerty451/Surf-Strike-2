@@ -1,4 +1,4 @@
-/** Test double of ClientModeHost for the modes with weapons (zombies, infected). */
+/** Test double of ClientModeHost for the modes with weapons (zombies, infected, defense). */
 import { buildCollisionWorld, createPlayer, mapCvars, type MapDef } from '@surf/shared';
 import { vi } from 'vitest';
 import { emptySample } from '../../net/interp.js';
@@ -6,6 +6,7 @@ import type { InfectedRenderer } from '../../render/infected.js';
 import type { RemotePlayers } from '../../render/players.js';
 import type { GameRenderer } from '../../render/renderer.js';
 import type { ZombieRenderer } from '../../render/zombies.js';
+import type { DefenseRenderer } from '../../render/defense.js';
 import type { ClientModeHost, RemotePlayer } from './types.js';
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
@@ -17,7 +18,7 @@ export function mocks<T extends object>(own: Partial<T> = {}): T {
 }
 
 /** Online as player 7, at the map's spawn. `hudWrites`: every HUD view the mode published, oldest first. */
-export function fakeHost(map: MapDef, view: 'zombies' | 'infected') {
+export function fakeHost(map: MapDef, view: 'zombies' | 'infected' | 'defense') {
 	const hudWrites: unknown[] = [];
 	const hud = {
 		get [view]() {
@@ -31,6 +32,7 @@ export function fakeHost(map: MapDef, view: 'zombies' | 'infected') {
 	const renderer = mocks<GameRenderer>({
 		zombies: mocks<ZombieRenderer>({ casings: mocks<ZombieRenderer['casings']>() }),
 		infected: mocks<InfectedRenderer>({ fx: mocks<InfectedRenderer['fx']>() }),
+		defense: mocks<DefenseRenderer>({ fired: vi.fn(() => true) }),
 		players: mocks<RemotePlayers>()
 	});
 	const base: Partial<Mutable<ClientModeHost>> = {

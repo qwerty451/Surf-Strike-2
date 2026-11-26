@@ -24,6 +24,7 @@ import { parseBoxNews, parseCasinoNews, pushBoxNews } from '#lib/game/box-news.j
 import { casinoError, casinoResult, crashStarted, parseCasino } from '#lib/game/casino.js';
 import { awardPopup, noticePopup } from '#lib/game/coins.js';
 import type { GameApi, GameHandle, HudStateShape } from '#lib/game/contract.js';
+import { isDefenseMockScene, mockDefenseState, mockDefenseView, mockMenu, sceneMenu, type DefenseMockScene } from '#lib/ui/defense-mock.js';
 import { infMockSpectates, isInfMockScene, mockInfectedView, type InfMockScene } from '#lib/ui/infected-mock.js';
 
 const T = TICK_RATE;
@@ -78,7 +79,7 @@ function mockRows(mode: GameModeId, n: number, self: number, old: boolean): Scor
 				status: i === 2 ? Status.Alpha : i % 2 ? Status.Infected : Status.Alive
 			},
 			hns: { score, kills: i % 4, status: i % 3 === 1 ? Status.Seeker : Status.Hider },
-			defense: { kills: Math.max(0, 90 - i * 9), status: i % 4 === 3 ? Status.Down : Status.Alive }
+			defense: { kills: Math.max(0, 90 - i * 9), score: 1200 - i * 90, status: i % 4 === 3 ? Status.Down : Status.Alive }
 		};
 		rows.push({ ...base, ...byMode[mode] });
 	}
@@ -114,6 +115,7 @@ function mockOwned(n: number): string[] {
 /** Only what the score metrics read of a mode state. */
 function mockState(mode: GameModeId, rows: ScoreRow[]): ModeState | null {
 	if (mode === 'surf' || mode === 'bhop') return null;
+	if (mode === 'defense') return mockDefenseState(rows);
 	const players = rows.map((r, i) => ({ id: r.id, team: r.status === Status.Alive ? 'survivor' : 'infected', streak: i * 3 }));
 	return { mode, phase: 'playing', round: 12, progress: 0.43, checkpoint: 2, checkpoints: 5, players } as unknown as ModeState;
 }
@@ -131,6 +133,8 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 	const asAdmin = params.get('view') === 'admin' || params.has('admin');
 	const sceneParam = params.get('scene');
 	const infScene: InfMockScene | null = params.get('mode') === 'infected' ? (isInfMockScene(sceneParam) ? sceneParam : 'survivor') : null;
+	const defScene: DefenseMockScene | null = mode === 'defense' ? (isDefenseMockScene(sceneParam) ? sceneParam : 'build') : null;
+	let defPage = defScene ? sceneMenu(defScene) : null;
 	const scale = params.get('scale');
 	if (scale) document.documentElement.style.setProperty('--hud-scale', scale);
 	if (params.has('boxall')) mockOwned(130);
@@ -140,13 +144,14 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		connecting: false,
 		playerCount: 12,
 		maxPlayers: 32,
-		mapId: infScene ? 'infected_outpost' : 'surf_ember',
-		mapTitle: infScene ? 'Outpost' : 'Ember',
+		mapId: infScene ? 'infected_outpost' : defScene ? 'defense_blackthorn' : 'surf_ember',
+		mapTitle: infScene ? 'Outpost' : defScene ? 'Blackthorn Farm' : 'Ember',
 		mapTimeLeft: 462,
 		gameMode: mode,
 		modeFamily: gameMode(mode).family,
 		tag: null,
 		zombies: null,
+		defense: defScene ? mockDefenseView(defScene, t0) : null,
 		infected: infScene ? mockInfectedView(infScene, t0) : null,
 		hns: null,
 		maps: [
@@ -264,7 +269,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			{ id: 4, from: null, text: 'New map record by glidepath: 02:18.902', system: true, at: t0 }
 		],
 		chatOpen: open === 'chat',
-		vote: params.has('rtv') || params.has('novote') || (infScene && !params.has('vote'))
+		vote: params.has('rtv') || params.has('novote') || ((infScene || defScene) && !params.has('vote'))
 			? null
 			: {
 					labels: [
@@ -274,9 +279,10 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 						'Bhop · Quarry',
 						'Tag · Courtyard',
 						'Zombie Run · Foundry',
+						...(params.get('vote') === '9' ? ['Zombie Defense · Blackthorn Farm', 'Infected · Outpost'] : []),
 						'Extend 10 min'
 					],
-					counts: [3, 5, 1, 0, 2, 1, 2],
+					counts: params.get('vote') === '9' ? [3, 5, 1, 0, 2, 1, 4, 0, 2] : [3, 5, 1, 0, 2, 1, 2],
 					endsAt: t0 + 14000,
 					duration: 20,
 					myVote: 2,
@@ -354,6 +360,15 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 	const names = ['sensitivity', 'fov', 'volume', 'cl_showfps', 'cl_showkeys', 'cl_showpos', 'cl_crosshairsize', 'connect', 'cvarlist', 'clear'];
 	const hist: string[] = [];
 	let nextId = 100;
+
+	/** Defense menus: a pick of a page row turns the page, any other pick or close closes. */
+	function mockModeUi(a: { kind: 'pick'; index: number } | { kind: 'close' }): void {
+		if (!defScene) return;
+		const m = mockMenu(defPage);
+		const act = a.kind === 'pick' ? m?.acts[a.index] : undefined;
+		defPage = act?.t === 'page' ? act.page : a.kind === 'close' ? null : defPage;
+		hud.defense = mockDefenseView(defScene, performance.now(), defPage);
+	}
 
 	const api: GameApi = {
 		exec(line) {
@@ -478,6 +493,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			if (hud.shop) hud.shop = { ...hud.shop, loadout: { ...hud.shop.loadout, [slot]: item }, notice: null };
 		},
 		createPreview: (c) => new CharacterPreview(c, 2),
+		modeUi: (a) => mockModeUi(a),
 		itemPicture: (id) => itemPicture(2, id),
 		minimizeBan(minimized) {
 			if (hud.ban) hud.ban = { ...hud.ban, minimized };
@@ -582,7 +598,11 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		} else if (e.key === 'r') {
 			hud.splitPopup = { label: 'Stage 4', ticks: hud.runTicks, delta: Math.round(0.42 * T), at: performance.now() };
 		} else if (hud.rtvRequest && (e.key === '1' || e.key === '2')) api.rtvVote(e.key === '1');
-		else if (e.key >= '1' && e.key <= '7') api.vote(Number(e.key));
+		else if (hud.defense?.menu && e.key >= '1' && e.key <= '9') mockModeUi({ kind: 'pick', index: Number(e.key) - 1 });
+		else if (defScene && (e.key === 'b' || e.key === 'e')) {
+			defPage = hud.defense?.menu ? (defPage === 'shop' || defPage === 'pad' || defPage === 'turret' ? null : 'shop') : e.key === 'b' ? 'shop' : 'pad';
+			hud.defense = mockDefenseView(defScene, performance.now(), defPage);
+		} else if (e.key >= '1' && e.key <= '9') api.vote(Number(e.key));
 	};
 	const up = (e: KeyboardEvent) => {
 		if (e.key === 'Tab') hud.scoreboardOpen = false;

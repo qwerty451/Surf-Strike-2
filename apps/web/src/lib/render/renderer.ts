@@ -15,6 +15,7 @@ import { InfectedRenderer } from './infected.js';
 import { GhostAvatar, RemotePlayers } from './players.js';
 import { Sky } from './sky.js';
 import { ZombieRenderer } from './zombies.js';
+import { DefenseRenderer } from './defense.js';
 import { buildWorldMeshes, type WorldMeshes } from './world.js';
 import { buildZoneMeshes, type ZoneMeshes } from './zones.js';
 
@@ -30,6 +31,8 @@ export class GameRenderer {
 	readonly ghost = new GhostAvatar(this.held);
 	/** Zombies mode: zombies, corpses, tracers and the first-person viewmodel (docs/modes.md#zombies). */
 	readonly zombies = new ZombieRenderer(this.held);
+	/** Zombie Defense: barricades, pads, turrets and their effects (docs/modes.md#zombie-defense). */
+	readonly defense = new DefenseRenderer();
 	/** Infected mode: throwing knives and the last-survivor UAV pulse (docs/modes.md#infected). */
 	readonly infected = new InfectedRenderer(this.held);
 	/** Hide and seek: the cash bag (docs/economy.md#hide-and-seek). */
@@ -52,7 +55,7 @@ export class GameRenderer {
 		this.zombies.useRenderer(this.renderer);
 		this.camera = new THREE.PerspectiveCamera(verticalFovFromHorizontal43(90), 16 / 9, 2, 250000);
 		this.scene.fog = this.fog;
-		this.scene.add(this.sky.mesh, this.hemi, this.sun, this.sun.target, this.players.group, this.ghost.group, this.zombies.group, this.infected.group, this.cashBag.group);
+		this.scene.add(this.sky.mesh, this.hemi, this.sun, this.sun.target, this.players.group, this.ghost.group, this.zombies.group, this.defense.group, this.infected.group, this.cashBag.group);
 		this.observer = new ResizeObserver(() => this.resize());
 		this.observer.observe(canvas);
 		this.resize();
@@ -108,6 +111,7 @@ export class GameRenderer {
 		this.world = this.zones = this.effects = null;
 		this.players.clear();
 		this.zombies.reset();
+		this.defense.reset();
 		this.infected.clear();
 		this.cashBag.clear();
 	}
@@ -132,6 +136,7 @@ export class GameRenderer {
 		this.zombies.updateCasings(timeSec * 1000, this.camera);
 		this.renderer.render(this.scene, this.camera);
 		this.zombies.update(timeSec * 1000);
+		this.defense.update(timeSec * 1000);
 		if (this.zombies.vmVisible) {
 			// Viewmodel over the world: own scene and camera, cleared depth so it never clips into walls.
 			this.renderer.autoClear = false;
@@ -147,6 +152,7 @@ export class GameRenderer {
 		this.players.dispose();
 		this.ghost.dispose();
 		this.zombies.dispose();
+		this.defense.dispose();
 		this.infected.dispose();
 		this.cashBag.dispose();
 		this.held.dispose();

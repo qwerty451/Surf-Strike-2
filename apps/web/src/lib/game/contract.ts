@@ -35,6 +35,8 @@ import type {
 	ShopOffer,
 	TagPhase,
 	WeaponId,
+	ZdPhase,
+	ZdPlayerStatus,
 	ZmPhase,
 	ZmTeam
 } from '@surf/shared';
@@ -156,6 +158,88 @@ export interface ZombiesView {
 	scoped: boolean;
 	/** Round result while the summary shows. */
 	summary: { won: boolean; secs: number; kills: number; top: string | null } | null;
+	online: boolean;
+}
+
+/** A row of the Zombie Defense shop or pad menu; `key` is its number key (1-9). */
+export interface DefenseMenuRow {
+	key: number;
+	label: string;
+	/** What it gives ("+5 max HP", "L2: 1.5 dmg · 8.7/s · range 1000"). */
+	detail: string;
+	/** Gold it costs (negative: what it pays back), null for pages and free rows. */
+	price: number | null;
+	/** buy: can buy; poor: cannot afford; owned / max: nothing left to buy; page: opens a sub-page; action: free (ready, back); locked: not allowed (note says why). */
+	state: 'buy' | 'poor' | 'owned' | 'max' | 'page' | 'action' | 'locked';
+	/** Level text ("1/2"), or why it is locked. */
+	note?: string;
+}
+
+/** Zombie Defense shop (B) or pad menu (E on a pad), build phase only. Number keys pick rows; it never frees the cursor. */
+export interface DefenseMenuView {
+	kind: 'shop' | 'weapons' | 'upgrades' | 'barricades' | 'pad';
+	title: string;
+	subtitle: string;
+	rows: DefenseMenuRow[];
+	/** Key hint line ("B back · 1-9 buy"). */
+	hint: string;
+	/** Last answer of the server to a pick (refused purchase etc.). */
+	notice: { text: string; ok: boolean; at: number } | null;
+}
+
+/** Zombie Defense HUD (docs/modes.md#zombie-defense, docs/ui.md#zombie-defense-hud); null in other modes. */
+export interface DefenseView {
+	phase: ZdPhase;
+	round: number;
+	/** Build: the wave that comes next; wave: the current one; ended: the wave lost. */
+	wave: number;
+	/** performance.now() when the build phase or the summary ends (0 otherwise). */
+	endsAt: number;
+	/** performance.now() when the wave started (wave phase), null otherwise. */
+	startedAt: number | null;
+	/** Zombies of the wave still to kill (alive and to come) and alive now. */
+	left: number;
+	alive: number;
+	teamKills: number;
+	status: ZdPlayerStatus;
+	hp: number;
+	maxHp: number;
+	gold: number;
+	/** Latest gold change shown next to the counter ("+15"). */
+	goldPop: { amount: number; at: number } | null;
+	myKills: number;
+	weapon: WeaponId;
+	weaponLabel: string;
+	mag: number;
+	magSize: number;
+	reserve: number;
+	reloadEndsAt: number;
+	reloadMs: number;
+	/** Owned weapons in key order (keys 1-5 = ZD_WEAPONS order). */
+	weapons: Array<{ key: number; label: string; held: boolean }>;
+	/** Everyone in the game, with ready marks in the build phase. */
+	team: Array<{ id: number; name: string; status: ZdPlayerStatus; ready: boolean; me: boolean }>;
+	ready: boolean;
+	readyCount: number;
+	/** Living players (the ready count needs all of them). */
+	livingCount: number;
+	/** Boss HP 0..1 while one is alive. */
+	boss: number | null;
+	/** Barricades by map index (name, planks, max, reinforce level 0-2). */
+	openings: Array<{ name: string; planks: number; max: number; reinforce: number }>;
+	/** What E does here ("Hold E to repair the north door"), or null. */
+	prompt: { text: string; active: boolean } | null;
+	/** Short banner ("Wave 3", "Wave cleared · +125 gold"). */
+	flash: { text: string; at: number; tone: 'info' | 'good' | 'bad' | 'boss' } | null;
+	/** Red alert line ("North door is down!"). */
+	alert: { text: string; at: number } | null;
+	hitMarker: { at: number; head: boolean; kill: boolean } | null;
+	killFeed: KillFeedLine[];
+	hurtAt: number;
+	scoped: boolean;
+	/** Game over summary while it shows. */
+	summary: { wave: number; kills: number; secs: number; top: string | null } | null;
+	menu: DefenseMenuView | null;
 	online: boolean;
 }
 
@@ -434,6 +518,7 @@ export interface HudStateShape {
 	modeFamily: ModeFamily;
 	tag: TagView | null;
 	zombies: ZombiesView | null;
+	defense: DefenseView | null;
 	infected: InfectedView | null;
 	hns: HnsView | null;
 	/** Rotation maps, in rotation order (Esc menu, Change map). */
@@ -581,6 +666,8 @@ export interface GameApi {
 	crashBuild(mult: number | null, out?: boolean): void;
 	/** Wear an owned item, or `null` for the slot's default. */
 	shopEquip(slot: CosmeticSlot, item: string | null): void;
+	/** Zombie Defense: a click on a row of the shop or pad menu (same as its number key), or closing it. */
+	modeUi(a: { kind: 'pick'; index: number } | { kind: 'close' }): void;
 	/** Turntable of the local player's character; null without WebGL. Dispose it. */
 	createPreview(canvas: HTMLCanvasElement): CharacterPreviewHandle | null;
 	/** Picture of one item (data URL) without an open shop; null without WebGL. */

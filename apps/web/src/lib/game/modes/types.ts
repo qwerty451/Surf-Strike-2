@@ -9,6 +9,7 @@ import type {
 	ClientMessage,
 	CollisionWorld,
 	Cvars,
+	DefenseFrame,
 	GameModeId,
 	GhostFrame,
 	Loadout,
@@ -125,10 +126,14 @@ export interface ModeView {
 }
 
 /** Console commands only some modes answer. */
-export type ModeCommand = 'beacon' | 'moab';
+/** `beacon` is E (infected: plant a beacon; Zombie Defense: repair / pad menu), `shop` is B and `ready` is F (Zombie Defense). */
+export type ModeCommand = 'beacon' | 'moab' | 'shop' | 'ready';
+
+/** A click in a mode's own menu (Zombie Defense shop and pad menu, while the cursor is free). */
+export type ModeUiAction = { kind: 'pick'; index: number } | { kind: 'close' };
 
 /** Server messages the game forwards to the mode as they are; a mode ignores those of others. */
-export type ModeServerMessage = Extract<ServerMessage, { type: 'modeState' | 'zm' | 'inf' | 'hns' | 'tagged' }>;
+export type ModeServerMessage = Extract<ServerMessage, { type: 'modeState' | 'zm' | 'zd' | 'inf' | 'hns' | 'tagged' }>;
 
 export interface ClientMode {
 	/** For tests and the dev console; the game does not read it. */
@@ -146,6 +151,10 @@ export interface ClientMode {
 	/** Number key. False: the key goes to the map vote. */
 	slot?(n: number, now: number): boolean;
 	command?(cmd: ModeCommand, now: number): void;
+	/** The key of a bound mode command was let go (E held to repair). */
+	commandUp?(cmd: ModeCommand, now: number): void;
+	/** A click in the mode's menu. */
+	ui?(a: ModeUiAction, now: number): void;
 	/** R. Not called while spectating. */
 	restart(now: number): void;
 	/** The `back` command. Absent: `restart`. Not called while spectating. */
@@ -183,6 +192,7 @@ export interface ClientMode {
 	// Network
 	message?(m: ModeServerMessage, now: number): void;
 	zombies?(f: ZombieFrame, arrival: number): void;
+	defense?(f: DefenseFrame, arrival: number): void;
 	ghostFrame?(f: GhostFrame): void;
 	/** Who is here, what they wear or who I am changed. */
 	peopleChanged?(): void;

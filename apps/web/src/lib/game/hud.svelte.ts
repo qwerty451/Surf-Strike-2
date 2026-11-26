@@ -21,7 +21,8 @@ import type {
 	RtvRequestView,
 	TagView,
 	VoteView,
-	ZombiesView
+	ZombiesView,
+	DefenseView
 } from './contract.js';
 
 export class HudState implements HudStateShape {
@@ -37,6 +38,7 @@ export class HudState implements HudStateShape {
 	modeFamily = $state<ModeFamily>('race');
 	tag = $state.raw<TagView | null>(null);
 	zombies = $state.raw<ZombiesView | null>(null);
+	defense = $state.raw<DefenseView | null>(null);
 	infected = $state.raw<InfectedView | null>(null);
 	hns = $state.raw<HnsView | null>(null);
 	maps = $state.raw<MapListEntry[]>([]);

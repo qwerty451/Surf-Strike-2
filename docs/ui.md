@@ -13,7 +13,7 @@ The HUD is Svelte components layered over the Three.js canvas.
 | Top centre | Map name and time left (`surf_ember · 07:42`) |
 | Top right | Connection status (`Online · 12 / 32` or `Offline — solo`), FPS if `cl_showfps 1` |
 | Bottom left | Chat (fades after 8 s; full history while typing) |
-| Left middle | Vote panel (up to 7 options "Surf · Kessler" … "Extend 10 min" with key numbers and live vote counts, countdown bar) |
+| Left middle | Vote panel (up to 9 options: 8 maps and Extend, "Surf · Kessler" … "Extend 10 min" with key numbers and live vote counts, countdown bar) |
 | Top centre, below map name | RTV request modal (see [RTV request](#rtv-request)) |
 | Top centre, below all of that | [Loot box news](#box-news) |
 | Top left | Award popups ([Award popups](#award-popups)), below the position readout |
@@ -72,13 +72,33 @@ A small CS2-style vote notice (like the kick or pause vote) at the top centre, u
 - Spectators see it with "Spectating: you cannot vote".
 - When it closes it shows "Passed: map vote starting" (green) or "Declined" (red) for 2.5 s; a passed request is replaced by the vote panel at once.
 
-Key routing (`apps/web/src/lib/game/vote.ts` `routeVoteKey`, ahead of binds): map vote open: `1`–`7` vote; else RTV request open: `1` yes, `2` no; else the key's bind runs (for example Zombie Run weapon slots).
+Key routing (`apps/web/src/lib/game/vote.ts` `routeVoteKey`, ahead of binds): map vote open: `1`–`9` vote (up to 8 maps and Extend); else RTV request open: `1` yes, `2` no; else the key's bind runs (for example Zombie Run weapon slots).
 
 <a id="zombies-hud"></a>
 
 ## Zombie Run HUD
 
 Shown on Zombie Run maps (`ZombiesHud.svelte`, [modes.md](modes.md#zombies)): a round banner under the map name (countdown; Survivor/Zombie, round clock, zone, zombies alive, your kills / team kills; result summary), route progress bar and the gate line ("Gate 2/5: get half the survivors into the green area" or "Gate 2/5 opens in 23 s"), short flash banners (checkpoint, gate, turned), kill feed top right, health (5 pips; a bar as a zombie) and weapon / ammo / reload bar bottom right, a loadout list (keys 1-4) while it is open, hit markers (white, yellow for headshots, red for kills), a red vignette when hit, and the sniper scope overlay. Binds in Zombie Run: mouse1 fire, mouse2 scope, R reload, 1-4 weapon (map vote while one is open).
+
+<a id="zombie-defense-hud"></a>
+
+## Zombie Defense HUD
+
+Shown on Zombie Defense maps (`DefenseHud.svelte` and `DefenseMenu.svelte`, [modes.md](modes.md#zombie-defense)):
+
+- **Banner** under the map name. Build phase: "Wave N in 23 s", the team's ready count ("Ready 1/3", needs every living player) and "F ready · B shop" until you are ready; the seconds turn red in the last 5. Wave: wave number, wave clock, zombies left (alive and still to come), your kills / team kills, and a purple Behemoth health bar while the boss lives. Game over: "Overrun", wave reached, game time, kills, top killer and the seconds to the new game.
+- **Alerts and banners** under it: a red breach alert ("The north door is down!") and short flash lines (wave start, "Wave 3 cleared · +125 gold", boss warning in purple, refused actions).
+- **Left**: the barricades (name, one box per plank, yellow under half, red when broken, `+` per Reinforced level) and the team (ready marks in the build phase, dead / next wave). Hidden while the map vote or a menu is open.
+- **Prompt** under the crosshair: what E does where you stand ("Hold E to repair the north door · 3/6", "Repairing …", "E: build a turret here", "E: Sentry L2 (upgrade / sell)"). The closer of a damaged barricade (within 96 units of its inside node, any phase) and a pad (within 96 units, build phase only) wins.
+- **Bottom right**: gold (with a "+15" when it grows), health bar with numbers (max HP grows with the shop), weapon, magazine / reserve, reload bar and the keys of the owned weapons (`1`–`5` in the order pistol, SMG, shotgun, LMG, sniper).
+- **Kill feed** top right (yours framed; turret kills read "Your Sentry · Walker"), hit markers, red vignette when hit, sniper scope, "You died" / "Next build phase" panels.
+- **Shop (B) and pad menu (E on a pad)**, build phase only, on the left. They never free the cursor: you keep moving and aiming, and number keys pick rows (`1`–`9`; clicks work too while the cursor is free). Each row shows its key, name, what it gives (turret rows: damage, rate, range, and for an upgrade the next level's numbers), and its price in yellow, red when you cannot afford it, "owned" / "max" when there is nothing left, `›` for a sub-page, `+refund` for selling. The shop has Weapons, Upgrades (max HP, damage, fast hands) and Barricades (repair all, reinforce each opening) pages, plus ammo refill and Ready; `B` goes back a page, then closes. The pad menu builds one of the five turrets on an empty pad, or upgrades / sells a built one (selling is locked to its builder while they are in the game) and links to the shop; `E` closes it. A refused pick shows why ("Not enough gold (600 needed)"). Menus close when the wave starts, when you die or when you walk away from the pad.
+
+In the world: barricade planks per opening with a count label on both faces ("4/6", "BROKEN" in red) and a pulsing red frame when broken; torn planks fly off outward, repaired ones swing in from inside; Reinforced level 1 adds two iron straps, level 2 an iron frame and darker planks. Turret pads are dark discs with a ring in the turret's colour; empty pads pulse with a light beam during the build phase. Turrets (sentry blue-grey, scattergun orange, mortar olive, tesla copper with a purple orb, frost a cyan crystal with its range on the floor) grow and gain barrels, plates and level pips per level (gold at level 3), turn and tilt to their targets, flash at the muzzle with tracers (sentry, scattergun), lob shells that burst in an orange blast (mortar), arc purple lightning through the zombies they hit (tesla), and brighten their frost circle while it slows zombies. Zombie kinds are told apart by size and colour: walkers as Zombie Run's, runners smaller and paler, brutes bigger and red, the Behemoth huge, purple and glowing; frosted zombies turn icy blue.
+
+Sounds reuse existing recordings through the infected names: gunshots per weapon (sentry and scattergun turrets use the SMG and shotgun shots, at most one per turret every 110 ms; the mortar launch the sniper shot), hit / headshot / kill markers, hurt and death, plank torn and mortar blast (the beacon smash), plank put back (knife into wood), turret built (beacon), tesla (beacon use), refused purchase (dry fire), purchase and swap (handling), wave start (zone bell) and wave cleared (record chime).
+
+Dev preview: `/?mockhud&mode=defense&scene=<scene>` with the scenes `build`, `shop`, `weapons`, `upgrades`, `barricades`, `pad`, `turret`, `wave`, `breach`, `boss`, `dead` and `ended` (list: `DEFENSE_MOCK_SCENES` in `ui/defense-mock.ts`); in the mock, number keys and clicks page through the menus and `B` / `E` open and close them. `&vote=9` shows a map vote with 8 maps and Extend.
 
 ## Hide and seek HUD
 
@@ -225,17 +245,19 @@ The race ghost ([gameplay.md](gameplay.md#ghosts)) is the player character ([cha
 | `Ctrl` | Crouch |
 | `Y` | Chat |
 | `Tab` | Scoreboard |
-| `1`–`8` | Map vote (while open); `1` / `2` = yes / no on an RTV request; else their binds (Zombie Run weapons `1`–`4`; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B., or next primary on the practice range) |
+| `1`–`9` | Map vote (while open); `1` / `2` = yes / no on an RTV request; else their binds (`vote N`: Zombie Run weapons `1`–`4`; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B., or next primary on the practice range; Zombie Defense weapons `1`–`5`, or the rows of an open shop or pad menu) |
 | `Mouse1` | Attack: fire, knife or claw swing |
 | `Mouse2` | Zombie Run: sniper scope. Infected: aim down sights (held; toggled with `cl_aimtoggle 1`), or throw the knife as infected |
 | `M` | Toggle spectate |
 | `R` | Restart run (`!r`); Zombie Run / Infected reload |
-| `E` | Infected: plant a respawn beacon (`beacon`) |
+| `E` | Infected: plant a respawn beacon (`beacon`). Zombie Defense: hold to repair the barricade in front of you; on a turret pad in the build phase, open or close the pad menu |
 | `N` | Infected: call an earned M.O.A.B. (`moab`) |
+| `B` | Zombie Defense: shop in the build phase (`shop`); again goes back a page, then closes |
+| `F` | Zombie Defense: ready for the next wave (`ready`) |
 | `` ` `` / `~` | Console |
 | `Esc` | Esc menu |
 
-Binds added after a player first saved their table (`E` → `beacon`, `N` → `moab`) are offered once: they are filled in when the key is free and the command is not bound elsewhere, and the offered list is stored in `surf.binds.offered` so a later `unbind` sticks. In a window, `Ctrl`+`N` stays with the browser, so `N` does nothing while crouching; in fullscreen with the keyboard lock it works ([Platform](#platform)).
+Binds added after a player first saved their table (`E` → `beacon`, `N` → `moab`, `5`–`9` → `vote 5`–`vote 9`, `B` → `shop`, `F` → `ready`) are offered once: they are filled in when the key is free and the command is not bound elsewhere, and the offered list is stored in `surf.binds.offered` so a later `unbind` sticks. In a window, `Ctrl`+`N` stays with the browser, so `N` does nothing while crouching; in fullscreen with the keyboard lock it works ([Platform](#platform)).
 
 ## Audio
 

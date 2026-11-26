@@ -337,6 +337,7 @@ export class Game implements CommandContext {
 				snapshot: (e, t) => this.onSnapshot(e, t),
 				ghost: (f) => this.client.ghostFrame?.(f),
 				zombies: (f, t) => this.client.zombies?.(f, t),
+				defense: (f, t) => this.client.defense?.(f, t),
 				closed: (wasOpen, _url, code) => this.onClosed(wasOpen, code)
 			},
 			{
@@ -381,6 +382,7 @@ export class Game implements CommandContext {
 			crashBuild: (mult, out) => this.audio.crashBuild(mult, out),
 			shopEquip: (slot, item) => this.shopRequest({ type: 'shopEquip', slot, item }),
 			createPreview: (canvas) => this.createPreview(canvas),
+			modeUi: (a) => this.client.ui?.(a, performance.now()),
 			itemPicture: (id) => itemPicture(this.selfId, id),
 			admin: (a) => this.adminAction(a)
 		};
@@ -625,7 +627,7 @@ export class Game implements CommandContext {
 			const shortcut = isBrowserShortcut(name, e);
 			if (shortcut && !this.input.locked && (name === 'w' || name === 't' || name === 'n')) return false;
 			const swallow = shortcut && this.input.locked;
-			// Number keys go to an open map vote (1-7) or RTV request (1/2) instead of their binds.
+			// Number keys go to an open map vote (1-9) or RTV request (1/2) instead of their binds.
 			const route = routeVoteKey(name, this.voteKeyState());
 			if (route) {
 				if (!e.repeat) {
@@ -698,6 +700,8 @@ export class Game implements CommandContext {
 			if (down) this.con.exec(cmd);
 			else this.con.exec(`-${cmd.slice(1).split(/[\s;]/)[0]}`);
 		} else if (down) this.con.exec(cmd);
+		// E held to repair (Zombie Defense): the mode hears the release of its bound command.
+		else if (cmd.trim() === 'beacon') this.client.commandUp?.('beacon', performance.now());
 	}
 
 	press(action: HoldAction, down: boolean): void {
@@ -1167,6 +1171,16 @@ export class Game implements CommandContext {
 	/** E (`beacon`): infected plant a respawn beacon; other modes ignore it. */
 	beacon(): void {
 		if (!this.spec) this.client.command?.('beacon', performance.now());
+	}
+
+	/** B (`shop`): Zombie Defense shop; other modes ignore it. */
+	shop(): void {
+		if (!this.spec) this.client.command?.('shop', performance.now());
+	}
+
+	/** F (`ready`): Zombie Defense ready for the next wave; other modes ignore it. */
+	ready(): void {
+		if (!this.spec) this.client.command?.('ready', performance.now());
 	}
 
 	/** N (`moab`, also key 4): infected survivors call an earned M.O.A.B.; other modes ignore it. */
@@ -1932,6 +1946,7 @@ export class Game implements CommandContext {
 				this.client.message?.(m, now);
 				break;
 			case 'zm':
+			case 'zd':
 			case 'inf':
 			case 'hns':
 			case 'tagged':

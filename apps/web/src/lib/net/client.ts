@@ -1,11 +1,14 @@
 /** Thin WebSocket wrapper: JSON text frames, binary snapshots and ghost frames. */
 import {
+	BIN_DEFENSE,
 	BIN_GHOST,
 	BIN_SNAPSHOT,
 	BIN_ZOMBIES,
+	decodeDefense,
 	decodeGhostFrame,
 	decodeSnapshot,
 	decodeZombies,
+	type DefenseFrame,
 	type ZombieFrame,
 	type ClientMessage,
 	type GhostFrame,
@@ -21,6 +24,8 @@ export interface NetClientHandlers {
 	ghost?(frame: GhostFrame): void;
 	/** BIN_ZOMBIES frame (zombies maps, docs/modes.md#zombies). */
 	zombies?(frame: ZombieFrame, arrivalMs: number): void;
+	/** BIN_DEFENSE frame (Zombie Defense maps, docs/modes.md#zombie-defense). */
+	defense?(frame: DefenseFrame, arrivalMs: number): void;
 	/** `code` is the WebSocket close code (0 when the socket never existed or was closed locally). */
 	close(wasOpen: boolean, code: number): void;
 }
@@ -78,6 +83,11 @@ export class NetClient {
 				if (kind === BIN_ZOMBIES) {
 					const frame = decodeZombies(data);
 					if (frame) this.h.zombies?.(frame, performance.now());
+					return;
+				}
+				if (kind === BIN_DEFENSE) {
+					const frame = decodeDefense(data);
+					if (frame) this.h.defense?.(frame, performance.now());
 					return;
 				}
 				if (kind !== BIN_SNAPSHOT) return;

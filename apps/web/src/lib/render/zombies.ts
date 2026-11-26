@@ -80,7 +80,16 @@ export interface ZombiePose {
 	z: number;
 	yaw: number;
 	flags: number;
+	/** Model scale about the feet (Zombie Defense kinds); 1 when absent. */
+	scale?: number;
+	/** Colour multiplied into the model (Zombie Defense kinds); white when absent. */
+	tint?: number;
+	/** Glow added to the model when not hit or attacking (the boss, frosted zombies). */
+	glow?: number;
 }
+
+const WHITE = 0xffffff;
+const TINT = new THREE.Color();
 
 interface ZombieMesh {
 	root: THREE.Group;
@@ -212,6 +221,8 @@ export class ZombieRenderer {
 			mat.needsUpdate = true;
 		}
 		mat.emissive.copy(NO_GLOW);
+		mat.color.setHex(WHITE);
+		m.root.scale.setScalar(1);
 		Object.assign(m.motion, emptyMotion());
 		m.velocity.reset();
 		m.model.animator.reset();
@@ -234,6 +245,8 @@ export class ZombieRenderer {
 				this.live.set(z.id, m);
 			}
 			m.root.position.set(z.x, z.z, -z.y);
+			m.root.scale.setScalar(z.scale ?? 1);
+			m.model.material.color.setHex(z.tint ?? WHITE);
 			m.x = z.x;
 			m.y = z.y;
 			m.z = z.z;
@@ -242,7 +255,10 @@ export class ZombieRenderer {
 			const attacking = (z.flags & ZF_ATTACKING) !== 0;
 			m.model.animator.lunging = attacking;
 			const hit = (z.flags & ZF_HIT) !== 0 || now < m.flashUntil;
-			m.model.material.emissive.copy(hit ? FLASH : attacking ? ATTACK_GLOW : NO_GLOW).multiplyScalar(hit ? 0.55 : 1);
+			if (hit) m.model.material.emissive.copy(FLASH).multiplyScalar(0.55);
+			else if (attacking) m.model.material.emissive.copy(ATTACK_GLOW);
+			else if (z.glow !== undefined) m.model.material.emissive.copy(TINT.setHex(z.glow));
+			else m.model.material.emissive.copy(NO_GLOW);
 		}
 		for (const [id, m] of this.live) {
 			if (this.seen.has(id)) continue;
@@ -274,6 +290,8 @@ export class ZombieRenderer {
 		else if (pose) {
 			m = this.take();
 			m.root.position.set(pose.x, pose.z, -pose.y);
+			m.root.scale.setScalar(pose.scale ?? 1);
+			m.model.material.color.setHex(pose.tint ?? WHITE);
 			m.motion.yaw = pose.yaw;
 			m.model.update(0, m.motion, 0);
 		} else return;
