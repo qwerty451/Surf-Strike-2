@@ -46,7 +46,7 @@ export function isZdWeapon(v: unknown): v is ZdWeaponId {
 // Gold (per player, reset every game; not the account coins)
 
 export const ZD_GOLD = Object.freeze({
-	start: 250,
+	start: 400,
 	kill: 10,
 	headshotKill: 15,
 	/** A kill by a turret, to the player who built it. */
