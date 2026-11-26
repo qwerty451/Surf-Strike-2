@@ -585,6 +585,13 @@ export class Lobby {
 				if (msg.type === 'boxOpen') return this.shop.openBox(c, k > RATE.shop.limit);
 				return this.shop.handle(c, msg, k > RATE.shop.limit);
 			}
+			case 'trnBet': {
+				// Tournament bets (docs/economy.md#tournament): lobby spectators may bet too; the casino's rate limit.
+				const k = c.rate.casino.hit(t);
+				if (k > RATE.casino.kick) return this.kick(c, 'casino flood');
+				if (!c.closed && k <= RATE.casino.limit) this.mode.message?.(c, msg);
+				return;
+			}
 			case 'casinoBet':
 			case 'crashCashout': {
 				const k = c.rate.casino.hit(t);

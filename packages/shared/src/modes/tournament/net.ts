@@ -9,6 +9,15 @@
  * Players who join after a tournament started watch until the next one.
  *
  * Fields may be added; existing names and meanings stay as written here.
+ *
+ * Client messages the server mode accepts (apps/server/src/modes/tournament.ts):
+ * - `fire { weapon, origin, dir, tick }`: duelists fire their held weapon of
+ *   TRN_WEAPONS while the round is live; spectators only `knife`. `tick` is
+ *   ignored (rewound by ping, as infected).
+ * - `knife { origin, dir }`: a knife swing, the same as `fire` with the knife.
+ * - `reload`, `loadout { weapon }`: duelists only (weapon of TRN_WEAPONS).
+ * - `trnBet { pick }`: also from lobby spectators.
+ * Duelists spawn holding the sniper; `ammo` follows every spawn, switch, shot and reload of a gun.
  */
 import type { Vec3 } from '../../types.ts';
 import type { WeaponId } from '../zombies/weapons.ts';
@@ -149,7 +158,7 @@ export type TrnEvent =
 	| { e: 'shot'; id: number; weapon: WeaponId; origin: Vec3; end: Vec3 }
 	/** To that player: magazine / reserve after a shot or reload. */
 	| { e: 'ammo'; weapon: WeaponId; mag: number; reserve: number }
-	/** To the bettor: bet accepted or refused (reason: 'closed' | 'small' | 'duelist' | 'coins' | 'twice' | 'pick'). */
+	/** To the bettor: bet accepted or refused (reason: 'closed' | 'small' | 'duelist' | 'coins' | 'twice' | 'pick' | 'guest'; `match` -1: no tournament). */
 	| { e: 'bet'; ok: boolean; match: number; pick: number | null; reason?: string }
 	/** To the bettor: outcome of their bet. `payout`: whole coins back (2× stake on a win, stake on a refund, 0 on a loss). */
 	| { e: 'betResult'; match: number; outcome: 'won' | 'lost' | 'refund'; payout: number }
