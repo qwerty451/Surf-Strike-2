@@ -1,6 +1,6 @@
 # Gamemodes
 
-Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old name). There are six modes:
+Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old name). There are seven modes:
 
 | Mode | Family | Rules | Default cvars | Min players | Scoreboard (plus the totals) |
 | --- | --- | --- | --- | --- | --- |
@@ -10,6 +10,7 @@ Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old na
 | `zombies` ("Zombie Run") | coop | Co-op escape with weapons against AI zombies, see [Zombie Run](#zombies) | `ZOMBIES_CVARS` | 1 | Kills, Turned, Status, Ping |
 | `infected` | infected | Infected with throwing knives, see [Infected](#infected) | `INFECTED_CVARS` | 2 | Score, Kills, Streak, Deaths, Status, Ping |
 | `hns` | hns | Hide and seek with knives; found hiders become seekers, see [Hide and seek](#hide-and-seek) | `HNS_CVARS` | 2 | Role, Finds, Survived, Ping |
+| `defense` ("Zombie Defense") | defense | Co-op base defence against endless waves: barricades, turrets, gold shop, see [Zombie Defense](#zombie-defense) | `ZOMBIES_CVARS` | 1 | Kills, Gold, Status, Ping |
 
 The map rotation, vote, `!rtv`, chat, spectating and lobby are the same in every mode. The rotation mixes maps of all modes, so a vote can move the lobby from a surf map to a tag map.
 
@@ -251,3 +252,69 @@ CS:GO hide and seek was never an official mode; every community server ran its o
 - No spectating while found (found hiders play on as seekers); spectating works as in every mode.
 - Map votes give hns no reserved slot (`VOTE_MAP_SLOTS` covers surf/bhop/tag/zombies); hns maps fill free slots like any map.
 
+
+## Zombie Defense
+
+Mode id `defense` (family `defense`), label "Zombie Defense". Co-op for 1 or more players: endless, growing waves of zombies come from every side, and the players hold a base with barricades, turrets and the guns of Zombie Run. Server-authoritative online; the shared `DefenseGame` is pure and clock-injected like `ZombiesGame`, so the client can run it solo offline. Physics: `ZOMBIES_CVARS`. Code: `packages/shared/src/modes/defense/` (`rules.ts` numbers, `nav.ts` A*, `game.ts` rules and AI, `net.ts` BIN_DEFENSE, `fixture.ts` a tiny test arena, tests), `apps/server/src/modes/defense.ts` and `defense-input.ts`. Map data: `MapDef.defense` (openings, pads, spawn zones, nav graph; the doc comments in `maps/types.ts` are the map contract, see [maps.md](maps.md)). Weapons, hitboxes and the zombie body code come from Zombie Run (`zombies/weapons.ts`, `zombies/hitbox.ts`, `gatedWorld` in `zombies/gates.ts`); `ZombiesGame` itself is not used.
+
+### Rules
+
+- **Phases.** `waiting` (nobody on the map) → `build` (45 s before wave 1, 30 s before every later wave; ends early when every living player pressed Ready) → `wave` → `build` → … → `ended` (8 s summary: wave reached, kills, top killer) → a new game from wave 1. A wave is cleared when every zombie of it was spawned and killed. A wave that runs longer than 6 minutes removes its remaining zombies and counts as cleared (event `timeout`), so a stuck zombie never stalls a game.
+- **Losing.** There is no core: the game is lost when every player in it is dead. Zombies that break a barricade come inside and go for the players.
+- **Players.** 10 HP (+5 per Max HP level). A walker or runner hit takes 1 HP, a brute 2, the boss 3; 300 ms of invulnerability after a hit. After 6 s without damage health comes back at 1 HP per second. A player who dies spectates (`status: 'dead'`, held, not AFK) and respawns inside the base at the start of the next build phase, if the others survive the wave. A player who joins during a wave or the summary waits (`status: 'waiting'`, held) and plays from the next build phase, with the start loadout. Joining during a build phase spawns at once. Every build phase heals the living to full.
+- **Gold** (in-mode currency, per player, reset every game; not the account coins): start 250. A kill pays 10 (headshot kill 15), a turret kill 5 to the turret's builder, a plank put back 5 (at most 60 gold of planks per player and wave), a cleared wave `50 + 25·wave` to every player in the game, alive or dead.
+- **Barricades** at the map's openings (`MapDef.defense.openings`): `planks` each (default 6), boarded at the start of a game. While an opening has a plank its box is solid for players and zombies (`defenseWorld` = the static world plus every opening box, `GatedWorld.setOpen(i, planks === 0)`); **bullets and turret shots pass through it**. One zombie at a time tears at an opening (the others wait their turn): one plank per 1.5 s (brute 0.6 s), ×2 / ×3 with the opening's "Reinforced" level 1 / 2. The boss smashes the whole barricade after a 2 s wind-up. **Repair:** a living player within 96 units (XY) of the opening's `inside` node who holds E puts one plank back per 0.6 s, in the build and wave phases, never while a zombie or player body overlaps the opening box.
+- **Turrets** on the map's pads (`MapDef.defense.pads`). In the build phase a player within 96 units of a pad opens the pad menu (E): build (empty pad), upgrade (levels 1-3, any player), sell (the builder; anyone once the builder has left) for half of everything put into it. Turrets cannot be destroyed. Cost: the type's price for level 1, ×1.5 of the previous step for each upgrade, rounded to 5. They target zombies inside the base first, then the nearest, re-picked every 8 sim ticks; the sentry, scattergun and tesla need line of sight (barricades do not block it).
+
+  | Turret | Cost (L1 / L2 / L3) | Damage (zombie HP) | Interval | Range | Special |
+  | --- | --- | --- | --- | --- | --- |
+  | Sentry | 300 / 450 / 675 | 1 / 1.5 / 2 | 140 / 115 / 90 ms | 900 / 1000 / 1100 | one target |
+  | Scattergun | 450 / 675 / 1015 | 4 / 6 / 9 per zombie | 900 / 760 / 620 ms | 500 / 560 / 620 | every zombie in a 15° / 17° / 19° cone |
+  | Mortar | 700 / 1050 / 1575 | 10 / 15 / 22 | 3.0 / 2.6 / 2.2 s | 1400 / 1550 / 1700, not under 200 | lobbed shell (700 u/s, leads the target), splash 160 / 180 / 200, half damage at the edge |
+  | Tesla coil | 900 / 1350 / 2025 | 6 / 9 / 13 per zombie | 1.5 / 1.3 / 1.1 s | 600 / 650 / 700 | arcs on to 3 / 4 / 5 zombies, 260 units per jump |
+  | Frost | 500 / 750 / 1125 | none | continuous | 450 / 525 / 600 | zombies in range move at ×0.55 / ×0.5 / ×0.45 |
+
+- **Shop** (B in the build phase; the pad menu can show it too). Item ids for `zd { act: { a: 'buy', item } }`:
+
+  | Item id | Price | Effect |
+  | --- | --- | --- |
+  | `weapon:smg`, `weapon:striker` (shotgun), `weapon:lmg`, `weapon:sniper` | 600, 900, 1400, 1200 | Owned for the rest of the game, full ammo, held at once |
+  | `ammo` | 150 | Magazine and reserve of every owned weapon full (refused when all are full) |
+  | `hp` | 500, 900 | Max HP +5 (2 levels) |
+  | `damage` | 600, 1100 | Weapon damage +15 % (2 levels) |
+  | `reload` | 400 | Reloads take ×0.7 |
+  | `reinforce:<opening id>` | 400, 800 | That opening's planks take 2× / 3× as long to tear off |
+  | `repairAll` | 10 per missing plank, at least 50 | Every opening that nobody stands in fully boarded |
+
+- **Weapons.** The pistol is free; the others are bought. Each owned weapon keeps its own magazine and reserve; swapping (any time while alive) cancels a reload and has the weapon's draw time. Numbers as in [Zombie Run](#weapons) (the shotgun is the Infected `striker`: 8 pellets that add up per zombie). Headshots kill walkers and runners outright; on brutes and the boss they do ×3 damage.
+- **Zombie types.** All use the real `playerMove` hull (32 × 72) like Zombie Run; `scale` only changes the model and the hitbox (Zombie Run's cylinder and head sphere scaled about the feet). HP is ×`1 + 0.12·(wave − 1)`.
+
+  | Kind | From wave | HP at wave 1 | Speed | Scale | Tears a plank | Hit | Reach |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | Walker | 1 | 8 | 265 | 1 | 1.5 s | 1 | 50 |
+  | Runner | 3 (10 % of the wave, +3 % per wave, at most 30 %) | 5 | 340 | 0.85 | 1.5 s | 1 | 48 |
+  | Brute | 5 (5 %, +2 % per wave, at most 20 %; never among the first three) | 40 | 190 | 1.35 | 0.6 s | 2 | 62 |
+  | Behemoth (boss) | one in every 5th wave, mid-wave | 300 × (1 + 0.6·(players − 1)) | 160 | 1.8 | whole barricade after 2 s | 3 | 80 |
+
+- **Scaling.** Zombies per wave `round((8 + 4·wave) × (1 + 0.5·(players − 1)))` (players in the game when the wave starts), plus the boss. One spawn per `1100 ms / (1 + 0.5·(players − 1))` (at least 200 ms), the first 1 s after the wave starts, at most 40 alive at once. Spawns walk round the spawn zones sorted by their angle around the base, taking opposite sides in turn from a random start, so every side gets zombies.
+- **AI.** Outside: walk the nav graph down a precomputed distance field (no opening links) to an opening's `outside` node. The opening is chosen by walking distance + 180 per zombie already heading there − 500 if it is open, plus up to 120 random, and re-chosen every 3 s. Within 56 units of a boarded opening's box: tear (or wait for the tearer). Open: walk to `inside`. Inside: chase the nearest living player: straight at them when close or in sight (sight through the gated world, so not through planks), else A* over the graph with boarded openings closed, re-planned every second. Outside zombies also go straight for a player within 320 units in sight. Attacks: a 350 ms wind-up on the nearest living player in reach and in sight, then a hit if still within 1.3× reach; 0.9 s cooldown. Hits slow zombies like in Zombie Run (and push them back, less for big ones). **Stall breaker:** a zombie that has not moved 48 units, torn, waited at a barricade or fought for 8 s is put back at a spawn zone.
+- **Coins** ([economy.md](economy.md#zombie-defense)): each cleared wave pays every player who was in the game for it. `roundStart` at every wave start, `roundEnd` after its payout or the game's end.
+
+### Client API
+
+Everything below is exported from `@surf/shared`.
+
+- **Game.** `new DefenseGame({ map, world, cvars, now, rng?, firstBuildSecs?, buildSecs?, endSecs?, waveMaxSecs?, maxZombies?, spawnIntervalScale?, lenient?, startGold?, plan? })`. `syncPlayers(ids, now)`, `setPlayerPos(id, { x, y, z, ducked, yaw? })`, `update(now) → ZdEvent[]` (advances the 64 Hz sim), `fire(id, { weapon, origin, dir, tick }, now) → { ok, reason?, events }`, `reload(id, now)`, `act(id, ZdAction, now) → ZdEvent[]`, `view(now) → ZdStateView`, `playerView(id)`, `weaponOf(id)` (held `WeaponState`), `planks(i)`, `snapshot() → { tick, zombies, turrets }`, `zombieFlags(z)`, `isTearing(z)`, `spawnZombie(kind, pos)` (tests). Fields: `phase`, `wave`, `round`, `tick`, `zombies` (`Map<id, DefenseZombie>`: `kind`, `body`, `yaw`, `hp`, `maxHp`, `state`), `world` (gated), `base` (static), `nav`, `info` (`MapDef.defense`). `zdEventRoute(ev)` says who gets an event online.
+- **Client collision.** `defenseWorld(baseWorld, map.defense)` gives the same gated world; call `setOpen(i, state.openings[i].planks === 0)` on every `modeState`.
+- **Actions** (`ZdAction`, C→S `zd { act }`): `{ a: 'ready' }`; `{ a: 'repair', on: boolean }` (send `on: true` on E down near an opening, `false` on release; no reply); `{ a: 'weapon', weapon: ZdWeaponId }`; `{ a: 'buy', item }`; `{ a: 'pad', pad: index, op: 'build' | 'upgrade' | 'sell', turret?: ZdTurretType }` (`turret` only and always for `build`). Every action but repair is answered with a `result` event: `{ id, act ('ready', 'weapon', 'buy:<item>', 'pad:<op>'), ok, reason?, gold }`; reasons: `gold`, `owned`, `full`, `max level`, `not build phase`, `too far`, `occupied`, `empty`, `not yours`, `unknown item|opening|pad|turret`, `not playing`, `nothing to repair`, `not owned`. Shots and reloads reuse `fire { weapon, origin, dir, tick }` (tick from BIN_DEFENSE, lag-compensated against a 400 ms history) and `reload {}`. Suggested keys: 1-5 = `ZD_WEAPONS` order (pistol, SMG, shotgun, LMG, sniper), E repair / pad menu, B shop, a Ready key in the build phase.
+- **State** (`modeState { mode: 'defense', ...ZdStateView }`, on change at most 4 Hz and every second): `phase`, `round` (game number), `wave` (build: the next wave; ended: the wave lost), `timeLeft` (build, ended), `elapsed` (wave), `toSpawn`, `alive`, `left`, `kills`, `boss` (0..1 or null), `openings[{ planks, max, reinforce }]` and `pads[{ type, level, owner }]` by map index, `players[{ id, status: 'alive' | 'dead' | 'waiting', hp, maxHp, gold, kills, deaths, weapon, weapons[], hpLevel, damageLevel, reloadLevel, ready }]`.
+- **Events** (S→C `zd { ev }`): to one player: `spawn { id, x, y, z, yaw, hp, reason: 'game' | 'join' | 'respawn' }` (teleport), `ammo { id, weapon, mag, reserve }`, `heal { id, hp }`, `result`; to the shooter: `hit { by, zid, head, kill }`; to everyone but the shooter: `shot { by, weapon, o, d, len, pellets? }` (pellets as Infected: flat `[dx, dy, dz, len, ...]`); to everyone: `phase { phase, wave, round }`, `kill { by, pad?, zid, kind, weapon, head, x, y, z, yaw, gold }` (`by` 0 with `pad`: a turret kill), `hurt { id, hp, zid }`, `death { id, zid }`, `plank { opening, planks, by }` (`by` null: torn off), `breach { opening, zid }`, `turret { pad, type, level, by, op }`, `shell { pad, x, y, z, ms }` (mortar, lands after `ms`), `boom { pad, x, y, z, r }`, `arc { pad, ids[], pts[] }` (tesla, chest points flat), `ready { id }`, `boss { zid, hp }`, `cleared { wave, bonus, secs, ids[] }`, `timeout { wave, removed }`, `end { wave, round, kills, topId, topKills, secs }`.
+- **Snapshot.** `BIN_DEFENSE` (type 5), every mode tick (32 Hz) during a wave or while zombies are left, droppable under backlog. `encodeDefense(tick, zombies, turrets)` / `decodeDefense(buf) → { tick, zombies[{ id, x, y, z, yaw, flags, hp (0..1), kind }], turrets[{ pad, yaw, pitch, flags, target }] }`. Zombie flags `ZDF_ATTACKING`, `ZDF_HIT`, `ZDF_SLOWED`, `ZDF_ON_GROUND` (as Zombie Run's), `ZDF_TEARING`, `ZDF_FROSTED`, `ZDF_INSIDE`. Turret flags `ZDT_FIRED` (fired in the last 2 sim ticks: muzzle flash, and a tracer to `target` for the sentry and scattergun) and `ZDT_ACTIVE` (has a target). Sentry and scattergun shots have no JSON event; mortar and tesla do.
+- **Numbers** for HUD and shop: `ZD_ZOMBIES`, `ZD_TURRETS`, `zdTurretCost(type, level)`, `zdTurretRefund(type, level)`, `ZD_SHOP`, `ZD_GOLD`, `ZD_WEAPONS`, `ZD_REPAIR_RANGE`, `ZD_PAD_RANGE`, `parseZdItem`.
+- **Test arena.** `defenseFixtureMap()`: a 1024-unit square base with a door on every side, 4 pads, 4 spawn zones and a 17-node graph (not in the rotation), for tests and for the client before the real map lands.
+
+### Known gaps
+
+- No best-wave record per map yet (`!top` answers with the current game).
+- Keys: the spec says 1-4 swap owned weapons, but there are five weapons (pistol plus four); the server takes a weapon id, so the client decides the key map.
+- Turrets only lead the target with the mortar; sentry and scattergun hit instantly (no projectile).
