@@ -14,6 +14,7 @@ import type { ModeState, RecordEntry, ScoreRow } from '../protocol.ts';
 import { formatMultiplier } from '../economy.ts';
 import { formatTicks, Status } from '../protocol.ts';
 import { TICK_RATE } from '../units.ts';
+import { trnPrize } from './tournament/net.ts';
 
 /** Shown for a missing value (no PB, guest totals, older server). */
 export const NO_VALUE = '–';
@@ -309,12 +310,61 @@ export const HNS_SCORE: ModeScoreDef = {
 	panel: { list: 'standing', subtitle: round, maxRows: 8, summary: [COINS] }
 };
 
-/** Tournament (placeholder until the mode's own columns). */
+/** Tournament bracket round (1-based) of a bracket with `size` slots: `Final`, `Semifinal`, `Quarterfinal`, else `Round n`. */
+export function trnRoundLabel(round: number, size: number): string {
+	const rounds = Math.max(1, Math.round(Math.log2(Math.max(2, size))));
+	const r = Math.floor(round);
+	if (!(r > 0)) return '';
+	const left = rounds - r;
+	return left === 0 ? 'Final' : left === 1 ? 'Semifinal' : left === 2 ? 'Quarterfinal' : `Round ${r}`;
+}
+
+/** Tournament status column: still in the bracket, knocked out, or watching (not an entrant). */
+export function trnStatusText(row: Pick<ScoreRow, 'status' | 'spectating'>): string {
+	if (row.spectating || row.status === Status.Spectating) return 'Watching';
+	if (row.status === Status.Alive) return 'In';
+	if (row.status === Status.Down) return 'Out';
+	return NO_VALUE;
+}
+
+/** Live entrants first, then knocked out, then watchers. */
+const trnRank = (r: ScoreRow): number => (r.status === Status.Alive ? 0 : r.status === Status.Down ? 1 : 2);
+
+/**
+ * Tournament (docs/modes.md#tournament). Rows: `score` = duels won on this
+ * map, `kills` = duel kills on this map, `status` = Alive (in the bracket),
+ * Down (knocked out) or Spectating (not an entrant).
+ */
 export const TOURNAMENT_SCORE: ModeScoreDef = {
-	columns: [KILLS, STATUS, PING],
-	compare: (a, b) => desc(a.kills, b.kills) || byName(a, b),
+	columns: [
+		{ id: 'trnStatus', label: 'Status', num: false, width: 6.4, panel: true, minor: true, text: (r) => trnStatusText(r) },
+		{ id: 'duels', label: 'Duels won', short: 'Won', num: true, width: 6.4, panel: true, text: (r) => int(r.score) },
+		KILLS,
+		PING
+	],
+	compare: (a, b) => trnRank(a) - trnRank(b) || desc(a.score, b.score) || desc(a.kills, b.kills) || byName(a, b),
 	mark: () => null,
-	panel: { list: 'standing', subtitle: round, maxRows: 8, summary: [COINS] }
+	panel: {
+		list: 'standing',
+		subtitle: (i) => {
+			const s = i.state;
+			if (s?.mode !== 'tournament' || !(s.round > 0)) return '';
+			return s.bracket ? trnRoundLabel(s.round, s.bracket.size) : `Round ${s.round}`;
+		},
+		maxRows: 8,
+		summary: [
+			{
+				id: 'prize',
+				line: ({ state }) => {
+					if (state?.mode !== 'tournament' || !state.bracket || state.phase === 'waiting') return null;
+					const n = state.bracket.entrants.length;
+					const coins = trnPrize(n);
+					return { label: 'Prize', text: `${coins} coin${coins === 1 ? '' : 's'}`, note: `${n} entrants` };
+				}
+			},
+			COINS
+		]
+	}
 };
 
 // ---------------------------------------------------------------------------

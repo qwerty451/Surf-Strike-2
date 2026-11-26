@@ -146,6 +146,8 @@ export interface ClientMode {
 	/** Number key. False: the key goes to the map vote. */
 	slot?(n: number, now: number): boolean;
 	command?(cmd: ModeCommand, now: number): void;
+	/** Tournament: bet on duelist `pick` (the bet panel's buttons). */
+	bet?(pick: number): void;
 	/** R. Not called while spectating. */
 	restart(now: number): void;
 	/** The `back` command. Absent: `restart`. Not called while spectating. */

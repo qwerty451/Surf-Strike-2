@@ -50,6 +50,7 @@ const inertApi: GameApi = {
 	createPreview: () => null,
 	itemPicture: () => Promise.resolve(null),
 	rtvVote: noop,
+	trnBet: noop,
 	admin: noop
 };
 

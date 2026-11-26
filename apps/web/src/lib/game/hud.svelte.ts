@@ -20,6 +20,7 @@ import type {
 	MapListEntry,
 	RtvRequestView,
 	TagView,
+	TournamentView,
 	VoteView,
 	ZombiesView
 } from './contract.js';
@@ -39,6 +40,8 @@ export class HudState implements HudStateShape {
 	zombies = $state.raw<ZombiesView | null>(null);
 	infected = $state.raw<InfectedView | null>(null);
 	hns = $state.raw<HnsView | null>(null);
+	tournament = $state.raw<TournamentView | null>(null);
+	bracketHeld = $state(false);
 	maps = $state.raw<MapListEntry[]>([]);
 	canChangeMap = $state(true);
 

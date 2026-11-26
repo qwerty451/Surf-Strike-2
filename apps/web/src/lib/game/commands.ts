@@ -7,7 +7,7 @@ import type { Binds } from './binds.js';
 import type { ClientCvars } from './cvars.js';
 import { formatCvarValue } from './cvars.js';
 
-export type HoldAction = 'forward' | 'back' | 'moveleft' | 'moveright' | 'jump' | 'duck' | 'showscores' | 'attack' | 'attack2';
+export type HoldAction = 'forward' | 'back' | 'moveleft' | 'moveright' | 'jump' | 'duck' | 'showscores' | 'attack' | 'attack2' | 'bracket';
 
 export const HOLD_ACTIONS: readonly HoldAction[] = [
 	'forward',
@@ -18,7 +18,8 @@ export const HOLD_ACTIONS: readonly HoldAction[] = [
 	'duck',
 	'showscores',
 	'attack',
-	'attack2'
+	'attack2',
+	'bracket'
 ];
 
 export interface CommandContext {
@@ -64,7 +65,7 @@ export function registerCommands(con: DevConsole, ctx: CommandContext): void {
 			if (c.name.startsWith('+') || c.name.startsWith('-')) continue;
 			ctx.print(`  ${c.name.padEnd(16)} ${c.help}`);
 		}
-		ctx.print('Type "cvarlist" for cvars. Hold actions: +forward +back +moveleft +moveright +jump +duck +showscores');
+		ctx.print('Type "cvarlist" for cvars. Hold actions: +forward +back +moveleft +moveright +jump +duck +showscores +bracket');
 	});
 	reg('clear', 'Clear the console', () => ctx.clearConsole());
 	reg('echo', 'Print text', (_a, raw) => ctx.print(raw, 'echo'));
