@@ -21,6 +21,7 @@ import type {
 	NetGraphView,
 	RtvRequestView,
 	TagView,
+	TournamentView,
 	VoteView,
 	ZombiesView,
 	DefenseView
@@ -42,6 +43,8 @@ export class HudState implements HudStateShape {
 	defense = $state.raw<DefenseView | null>(null);
 	infected = $state.raw<InfectedView | null>(null);
 	hns = $state.raw<HnsView | null>(null);
+	tournament = $state.raw<TournamentView | null>(null);
+	bracketHeld = $state(false);
 	maps = $state.raw<MapListEntry[]>([]);
 	canChangeMap = $state(true);
 

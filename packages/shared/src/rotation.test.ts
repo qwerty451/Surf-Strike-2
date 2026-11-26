@@ -277,7 +277,7 @@ describe('MapRotation vote options by category', () => {
 	});
 
 	it('fills free slots from other categories, fewer only without enough maps', () => {
-		// No zombies/infected, one tag map: free slots taken by surf/bhop extras.
+		// No zombies/infected/hns/tournament, one tag map: free slots taken by surf/bhop extras.
 		const maps = ['s1', 's2', 's3', 's4', 'b1', 'b2', 'b3', 't1'];
 		const ids = mapIds(timedVote(catRotation({ maps })).options);
 		expect(ids).toHaveLength(7);

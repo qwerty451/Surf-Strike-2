@@ -5,6 +5,7 @@ import { HnsMode } from './hns.js';
 import { InfectedMode } from './infected.js';
 import { RaceMode } from './race.js';
 import { TagMode } from './tag.js';
+import { deckSpawn, TournamentMode } from './tournament.js';
 import type { ClientMode, ClientModeHost } from './types.js';
 import { ZombiesMode } from './zombies.js';
 
@@ -22,7 +23,8 @@ const CLIENT_MODES: Readonly<Record<ModeFamily, ClientModeDef>> = Object.freeze(
 	coop: { create: (host) => new ZombiesMode(host), spawn: (map) => map.spawn },
 	infected: { create: (host) => new InfectedMode(host), spawn: randomSpawn },
 	hns: { create: (host) => new HnsMode(host), spawn: (map) => pick(hnsSpawns(map).hiders) },
-	defense: { create: (host) => new DefenseMode(host), spawn: (map) => map.spawn }
+	defense: { create: (host) => new DefenseMode(host), spawn: (map) => map.spawn },
+	tournament: { create: (host) => new TournamentMode(host), spawn: (map) => deckSpawn(map) }
 });
 
 /** The mode of the host's map. */

@@ -100,7 +100,7 @@ export class TestClient {
 				if (ghost) this.ghosts.push(ghost);
 			} else {
 				const message = JSON.parse(Buffer.from(data as ArrayBuffer).toString('utf8')) as ServerMessage;
-				if ((message.type === 'hns' || message.type === 'inf' || message.type === 'zm' || message.type === 'zd') && message.spawnSeq !== undefined) this.spawnSeq = message.spawnSeq;
+				if ((message.type === 'hns' || message.type === 'inf' || message.type === 'zm' || message.type === 'zd' || message.type === 'trn') && message.spawnSeq !== undefined) this.spawnSeq = message.spawnSeq;
 				this.messages.push(message);
 			}
 			this.notify();

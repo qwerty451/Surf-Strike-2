@@ -173,8 +173,13 @@ export function casinoNewsTier(bet: number, payout: number): CasinoNewsTier | nu
 	return bet > 0 ? (CASINO_NEWS_TIERS.findLast((t) => payout >= bet * t) ?? null) : null;
 }
 
+/** `casino_log` games of tournament bets and their Coins view labels. */
+export const TRN_BET_LABELS = Object.freeze({ trnBet: 'Tournament bet', trnWin: 'Tournament bet won', trnRefund: 'Tournament bet refunded' });
+
 /** Text of a settled bet in the Coins view: `Coinflip won`. `net`: payout minus bet, tenths. */
 export function casinoLabel(game: string, net: number): string {
+	// Tournament bets (docs/economy.md#tournament) share the casino log: stake, win, refund rows.
+	if (Object.hasOwn(TRN_BET_LABELS, game)) return TRN_BET_LABELS[game as keyof typeof TRN_BET_LABELS];
 	const name = isCasinoGame(game) ? { coinflip: 'Coinflip', crash: 'Crash', slots: 'Slots' }[game] : game;
 	return `${name} ${net > 0 ? 'won' : net < 0 ? 'lost' : 'bet returned'}`;
 }

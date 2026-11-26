@@ -23,6 +23,10 @@
  * - `casino_log`, `casino_stats`, `casino_crash`: the last CASINO_RECENT casino
  *   bets per account, their sums per account, and the open crash bets
  *   (docs/economy.md#casino).
+ * - `trn_bets`: open tournament bets, whose stake is taken; given back at
+ *   start-up when the server stopped before the duel ended
+ *   (docs/economy.md#tournament). Their stakes and payouts are `casino_log`
+ *   rows (`trnBet`, `trnWin`, `trnRefund`), not in `casino_stats`.
  *
  * Every table is created with CREATE TABLE IF NOT EXISTS and new columns are
  * added with a default, so an existing database migrates in place on start-up
@@ -305,6 +309,12 @@ export class Db {
 				created_at INTEGER NOT NULL,
 				bet INTEGER NOT NULL
 			);
+			CREATE TABLE IF NOT EXISTS trn_bets (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+				created_at INTEGER NOT NULL,
+				bet INTEGER NOT NULL
+			);
 		`);
 		// Missing = permanent ban / no active time yet.
 		this.addColumn('bans', 'expires_at', 'INTEGER');
@@ -473,6 +483,10 @@ export class Db {
 			openCrash: d.prepare(`INSERT INTO casino_crash (account_id, created_at, bet) VALUES (?, ?, ?) ON CONFLICT(account_id) DO NOTHING`),
 			closeCrash: d.prepare(`DELETE FROM casino_crash WHERE id = ? RETURNING account_id AS accountId, bet`),
 			openCrashes: d.prepare(`SELECT id FROM casino_crash ORDER BY id`).pluck(),
+			openTrnBet: d.prepare(`INSERT INTO trn_bets (account_id, created_at, bet) VALUES (?, ?, ?)`),
+			closeTrnBet: d.prepare(`DELETE FROM trn_bets WHERE id = ? RETURNING account_id AS accountId, bet`),
+			openTrnBets: d.prepare(`SELECT id FROM trn_bets ORDER BY id`).pluck(),
+			trnBetRow: d.prepare(`SELECT account_id AS accountId, bet FROM trn_bets WHERE id = ?`),
 
 			disabledMaps: d.prepare(`SELECT map_id FROM map_settings WHERE enabled = 0`),
 			setMapEnabled: d.prepare(
@@ -756,6 +770,68 @@ export class Db {
 				return out;
 			})
 			.immediate();
+	}
+
+	// -----------------------------------------------------------------------
+	// Tournament bets (docs/economy.md#tournament): the crash pattern, without
+	// the one-per-account limit and without casino_stats; tenths.
+
+	/** Take a tournament stake: the bet stays open until `trnBetClose`. Null when the balance is too low. */
+	trnBetOpen(accountId: number, at: number, bet: number): number | null {
+		return this.db
+			.transaction((): number | null => {
+				if (this.st.spendPoints.run({ id: accountId, amount: bet }).changes === 0) return null;
+				const id = Number(this.st.openTrnBet.run(accountId, at, bet).lastInsertRowid);
+				this.logTrnBet(accountId, at, 'trnBet', bet, 0);
+				return id;
+			})
+			.immediate();
+	}
+
+	/** Settle an open tournament bet: credit `payout` (0 for a loss). False when it is no longer open (nothing paid). */
+	trnBetClose(id: number, at: number, payout: number, game: 'trnWin' | 'trnRefund' | 'trnLoss'): boolean {
+		return this.db
+			.transaction(() => {
+				const r = this.st.closeTrnBet.get(id) as { accountId: number; bet: number } | undefined;
+				if (!r) return false;
+				if (payout > 0) {
+					this.st.credit.run(payout, r.accountId);
+					this.logTrnBet(r.accountId, at, game, 0, payout);
+				}
+				return true;
+			})
+			.immediate();
+	}
+
+	/** Give every open tournament bet back (server start); tenths per account. */
+	refundTrnBets(at: number): Map<number, number> {
+		return this.db
+			.transaction(() => {
+				const out = new Map<number, number>();
+				for (const id of this.st.openTrnBets.all() as number[]) {
+					const r = this.st.closeTrnBet.get(id) as { accountId: number; bet: number };
+					this.st.credit.run(r.bet, r.accountId);
+					this.logTrnBet(r.accountId, at, 'trnRefund', 0, r.bet);
+					out.set(r.accountId, (out.get(r.accountId) ?? 0) + r.bet);
+				}
+				return out;
+			})
+			.immediate();
+	}
+
+	/** Account and stake of an open tournament bet. */
+	trnBetOpenRow(id: number): { accountId: number; bet: number } | null {
+		return (this.st.trnBetRow.get(id) as { accountId: number; bet: number } | undefined) ?? null;
+	}
+
+	/** Open tournament bets (tests). */
+	openTrnBetCount(): number {
+		return (this.st.openTrnBets.all() as number[]).length;
+	}
+
+	private logTrnBet(accountId: number, at: number, game: string, bet: number, payout: number): void {
+		this.st.logCasino.run(accountId, at, game, bet, payout);
+		this.st.pruneCasino.run({ id: accountId, keep: CASINO_RECENT });
 	}
 
 	/** Won minus bet, of all settled bets ever. */

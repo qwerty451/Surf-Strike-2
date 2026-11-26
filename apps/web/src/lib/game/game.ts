@@ -390,6 +390,7 @@ export class Game implements CommandContext {
 			vote: (o) => this.vote(o),
 			changeMap: (id) => this.changeMap(id),
 			rtvVote: (yes) => this.rtvVote(yes),
+			trnBet: (pick) => this.client.bet?.(pick),
 			minimizeBan: (minimized) => this.minimizeBan(minimized),
 			shopBuy: (item) => this.shopRequest({ type: 'shopBuy', item }),
 			boxOpen: () => this.shopRequest({ type: 'boxOpen' }),
@@ -709,7 +710,7 @@ export class Game implements CommandContext {
 		if (!cmd) return;
 		if (cmd.startsWith('+')) {
 			const action = cmd.slice(1) as HoldAction;
-			if (HOLD_ACTIONS.includes(action) && action !== 'showscores') {
+			if (HOLD_ACTIONS.includes(action) && action !== 'showscores' && action !== 'bracket') {
 				this.inputTime = t;
 				this.press(action, true);
 				this.press(action, false);
@@ -740,6 +741,9 @@ export class Game implements CommandContext {
 				this.hud.scoreboardOpen = is;
 				if (is && this.mode === 'solo') this.refreshSoloBoard(performance.now());
 				break;
+			case 'bracket':
+				this.hud.bracketHeld = is;
+				break;
 			case 'jump':
 				if (is && this.spec) this.toggleFreeFly();
 				break;
@@ -758,6 +762,7 @@ export class Game implements CommandContext {
 		this.client.release?.(performance.now());
 		this.sampler.releaseAll(performance.now());
 		this.hud.scoreboardOpen = false;
+		this.hud.bracketHeld = false;
 	}
 
 	private onPointerLock(locked: boolean): void {
@@ -1444,7 +1449,8 @@ export class Game implements CommandContext {
 
 	private get combatHistoryMs(): number | undefined {
 		switch (this.gameMode.id) {
-			case 'infected': return INF_HISTORY_MS;
+			case 'infected':
+			case 'tournament': return INF_HISTORY_MS;
 			case 'hns': return HNS_MAX_REWIND_MS;
 			case 'zombies': return ZM_HISTORY_MS;
 		}
@@ -2050,6 +2056,7 @@ export class Game implements CommandContext {
 			case 'zd':
 			case 'inf':
 			case 'hns':
+			case 'trn':
 				if (m.ev.e === 'spawn' && m.ev.id === this.selfId && m.spawnSeq !== undefined) {
 					const step = (m.spawnSeq - this.spawnSeq) & 0xffff;
 					if (step >= 0x8000 || m.spawnSeq === 0) break;

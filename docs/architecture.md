@@ -138,7 +138,7 @@ Protocol v3 carries one rewind timestamp per attack. When targets are drawn at d
 | C→S | Casino: `casinoBet { game, bet, … }`, `crashCashout` ([economy.md](economy.md#casino)) | JSON |
 | S→C | Casino: `casino`, `crashStart`, `casinoResult`, `casinoNews` ([economy.md](economy.md#casino)) | JSON |
 | S→C | Coins: `coins`, `award`, `multiplier`, `coinsNotice` ([economy.md](economy.md#wire)) | JSON |
-| C→S | `vote { option }` (1-based, up to 7), `rtv` (= `rtvRequest` without a map), `spectate { targetId }` | JSON |
+| C→S | `vote { option }` (1-based, up to 9), `rtv` (= `rtvRequest` without a map), `spectate { targetId }` | JSON |
 | C→S | `rtvRequest { mapId? }`: start an RTV request, optionally nominating a map (on an open request: a yes vote); `rtvVote { yes }`: answer it. Errors come back as system chat | JSON |
 | S→C | `voteStart { options, duration, rtv }` (up to 6 maps by category, then `extend`), `voteUpdate`, `voteEnd`, `mapChange { map, mode, ... }` | JSON |
 | S→C | `rtvRequest { started, initiatorId, initiator, mapId, duration, yes, no, needed }` (start, every count or threshold change, and on join while open; `duration` = seconds left), `rtvRequestEnd { passed, reason: passed\|timeout\|rejected\|cancelled, cooldown }`, `rtvCooldown { seconds, reason: declined\|mapStart }` (on join and map change while requests are blocked) | JSON |

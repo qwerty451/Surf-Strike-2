@@ -137,7 +137,7 @@ export type ModeCommand = 'beacon' | 'moab' | 'shop' | 'ready';
 export type ModeUiAction = { kind: 'pick'; index: number } | { kind: 'close' };
 
 /** Server messages the game forwards to the mode as they are; a mode ignores those of others. */
-export type ModeServerMessage = Extract<ServerMessage, { type: 'modeState' | 'zm' | 'zd' | 'inf' | 'hns' | 'tagged' }>;
+export type ModeServerMessage = Extract<ServerMessage, { type: 'modeState' | 'zm' | 'zd' | 'inf' | 'hns' | 'trn' | 'tagged' }>;
 
 export interface ClientMode {
 	/** For tests and the dev console; the game does not read it. */
@@ -159,6 +159,8 @@ export interface ClientMode {
 	commandUp?(cmd: ModeCommand, now: number): void;
 	/** A click in the mode's menu. */
 	ui?(a: ModeUiAction, now: number): void;
+	/** Tournament: bet on duelist `pick` (the bet panel's buttons). */
+	bet?(pick: number): void;
 	/** R. Not called while spectating. */
 	restart(now: number): void;
 	/** The `back` command. Absent: `restart`. Not called while spectating. */

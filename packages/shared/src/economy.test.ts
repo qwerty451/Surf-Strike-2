@@ -71,7 +71,7 @@ describe('payouts', () => {
 		const caps = Object.fromEntries(Object.entries(AWARDS as Record<string, AwardDef>).map(([k, d]) => [k, d.perRound]));
 		expect(caps).toMatchObject({ tagChased: 30, tagTag: 30, hnsChase: 40, hnsChased: 80, hnsView: 60, infKills: 40, infInfect: 50, zombiesKill: 30 });
 		expect(AWARDS.tagPlace.minActive).toBe(4);
-		expect((Object.keys(AWARDS) as (keyof typeof AWARDS)[]).filter((k) => AWARDS[k].exempt)).toEqual(['raceFirst', 'raceRecord']);
+		expect((Object.keys(AWARDS) as (keyof typeof AWARDS)[]).filter((k) => AWARDS[k].exempt)).toEqual(['raceFirst', 'raceRecord', 'trnChampion']);
 	});
 	it('tag placement: time not IT, then time chased, ties share', () => {
 		const row = (id: number, score: number, chasedMs = 0) => ({ id, score, chasedMs });

@@ -31,6 +31,7 @@
 	import AwardPopups from '#lib/ui/AwardPopups.svelte';
 	import BanScreen from '#lib/ui/BanScreen.svelte';
 	import HnsHud from '#lib/ui/HnsHud.svelte';
+	import TournamentHud from '#lib/ui/TournamentHud.svelte';
 
 	let { hud, api }: { hud: HudStateShape; api: GameApi } = $props();
 
@@ -82,6 +83,7 @@
 			{#if hud.spectating}<SpectatorBar spectating={hud.spectating} />{/if}
 			{#if hud.tag}<TagHud tag={hud.tag} {now} />{/if}
 			{#if hud.hns}<HnsHud h={hud.hns} {now} part="top" />{/if}
+			{#if hud.tournament}<TournamentHud t={hud.tournament} {now} part="top" />{/if}
 			{#if hud.rtvRequest}<RtvRequest request={hud.rtvRequest} {now} interactive={!hud.pointerLocked} onvote={(yes) => api.rtvVote(yes)} />{/if}
 		</div>
 
@@ -121,8 +123,18 @@
 			/>
 		{/if}
 		{#if hud.infected}<InfectedHud inf={hud.infected} {now} />{/if}
+		{#if hud.tournament}
+			<TournamentHud
+				t={hud.tournament}
+				{now}
+				part="screen"
+				bracketHeld={hud.bracketHeld}
+				interactive={!hud.pointerLocked}
+				onbet={(pick) => api.trnBet(pick)}
+			/>
+		{/if}
 		{#if showScorePanel}<ScorePanel mode={hud.gameMode} input={scoreInput} unofficial={race && hud.unofficial} />{/if}
-		{#if !hud.zombies?.scoped && !hud.defense?.scoped && !hud.infected?.scoped && !hud.hns?.blindfold && crosshairOpacity(hud.infected?.aimT) > 0}<Crosshair cvars={hud.cvars} spreadDeg={hud.infected?.spreadDeg} opacity={crosshairOpacity(hud.infected?.aimT)} />{/if}
+		{#if !hud.zombies?.scoped && !hud.defense?.scoped && !hud.infected?.scoped && !hud.tournament?.scoped && !hud.hns?.blindfold && crosshairOpacity(hud.infected?.aimT ?? hud.tournament?.aimT) > 0}<Crosshair cvars={hud.cvars} spreadDeg={hud.infected?.spreadDeg} opacity={crosshairOpacity(hud.infected?.aimT ?? hud.tournament?.aimT)} />{/if}
 
 		<div class="below-crosshair">
 			{#if clickHint}

@@ -30,7 +30,9 @@ const AREAS: Partial<Record<GameModeId, PanelArea>> = {
 	infected: { top: BELOW_KILL_FEED, bottom: { px: 34, scaled: 186 } },
 	hns: { top: BELOW_KILL_FEED, bottom: BOTTOM },
 	// Above gold, health and the weapon with its key row.
-	defense: { top: BELOW_KILL_FEED, bottom: { px: 34, scaled: 92 } }
+	defense: { top: BELOW_KILL_FEED, bottom: { px: 34, scaled: 92 } },
+	// Below the kill feed, above the weapon panel.
+	tournament: { top: BELOW_KILL_FEED, bottom: { px: 34, scaled: 74 } }
 };
 
 export function panelArea(mode: GameModeId): PanelArea {

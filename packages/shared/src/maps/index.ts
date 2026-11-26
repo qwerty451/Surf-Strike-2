@@ -21,6 +21,7 @@ import { infected_terminal } from './infected_terminal.ts';
 import { infected_foundry } from './infected_foundry.ts';
 import { hns_lido, hns_lido_m } from './hns_lido.ts';
 import { defense_blackthorn } from './defense_blackthorn.ts';
+import { tournament_orangery } from './tournament_orangery.ts';
 import { SANDBOX } from './sandbox.ts';
 
 /**
@@ -32,10 +33,10 @@ export const SPAWN_CLEARANCE = 0.25;
 
 function liftSpawns(map: MapDef): MapDef {
 	// Tag spawn lists may share objects with `spawn`: lift each object once.
-	// Hide and seek spawns and fixed teleport destinations are authored on floors too.
+	// Hide and seek spawns, tournament duel/deck spawns and fixed teleport destinations are authored on floors too.
 	const lifted = new Set<Spawn>();
 	const dests = map.zones.flatMap((z) => (z.type === 'teleport' && z.dest ? [z.dest] : []));
-	for (const s of [map.spawn, ...(map.spawns ?? []), ...(map.hns?.hiderSpawns ?? []), ...(map.hns?.seekerSpawns ?? []), ...dests]) {
+	for (const s of [map.spawn, ...(map.spawns ?? []), ...(map.hns?.hiderSpawns ?? []), ...(map.hns?.seekerSpawns ?? []), ...(map.tournament?.duelSpawns ?? []), ...(map.tournament?.deckSpawns ?? []), ...dests]) {
 		if (lifted.has(s)) continue;
 		lifted.add(s);
 		s.pos = { ...s.pos, z: s.pos.z + SPAWN_CLEARANCE };
@@ -67,7 +68,8 @@ export const MAPS: MapDef[] = [
 	infected_foundry,
 	hns_lido,
 	hns_lido_m,
-	defense_blackthorn
+	defense_blackthorn,
+	tournament_orangery
 ].map(liftSpawns);
 liftSpawns(SANDBOX);
 

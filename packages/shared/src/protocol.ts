@@ -9,6 +9,7 @@ import type { MapDef } from './maps/types.ts';
 import type { GameModeId } from './modes/index.ts';
 import type { ZdAction, ZdEvent, ZdStateView } from './modes/defense/game.ts';
 import type { HnsEvent, HnsStateView } from './modes/hns.ts';
+import type { TrnEvent, TrnStateView } from './modes/tournament/net.ts';
 import type { InfEvent, InfStateView } from './modes/infected/game.ts';
 import type { TagPhase, TagScore } from './modes/tag.ts';
 import type { ZmEvent, ZmStateView } from './modes/zombies/game.ts';
@@ -167,7 +168,12 @@ export interface DefenseModeState extends ZdStateView {
 	mode: 'defense';
 }
 
-export type ModeState = TagModeState | ZombiesModeState | InfectedModeState | HnsModeState | DefenseModeState;
+/** Tournament state (docs/modes.md#tournament). */
+export interface TournamentModeState extends TrnStateView {
+	mode: 'tournament';
+}
+
+export type ModeState = TagModeState | ZombiesModeState | InfectedModeState | HnsModeState | DefenseModeState | TournamentModeState;
 
 /** One line of a map's leaderboard. */
 export interface RecordEntry {
@@ -267,6 +273,8 @@ export type ClientMessage =
 	/** Cash out the running crash round; counts when the server receives it. */
 	| { type: 'crashCashout' }
 	/** Admin menu (docs/gameplay.md#admin): re-checked on the server, ignored for non-admins. */
+	/** Tournament: a spectator bets TRN_BET coins on duelist `pick` of the current or next duel. */
+	| { type: 'trnBet'; pick: number }
 	| { type: 'admin'; action: AdminAction };
 
 /** Admin requests; every one is answered with `adminResult` and (for admins) `adminState`. */
@@ -459,6 +467,8 @@ export type ServerMessage =
 	| { type: 'hns'; ev: HnsEvent; spawnSeq?: number }
 	/** Zombie Defense event (phases, spawns, hits, kills, planks, turrets, shop results, wave cleared, game over). */
 	| { type: 'zd'; ev: ZdEvent; spawnSeq?: number }
+	/** Tournament event (spawn, duel and round flow, hits, kills, tracers, ammo, bets, champion). */
+	| { type: 'trn'; ev: TrnEvent; spawnSeq?: number }
 	| { type: 'timeLeft'; mapTimeLeft: number }
 	/** `richest`: the accounts with the most coins, richest first, online or not (absent on older servers). */
 	| { type: 'scoreboard'; rows: ScoreRow[]; richest?: RichEntry[] }

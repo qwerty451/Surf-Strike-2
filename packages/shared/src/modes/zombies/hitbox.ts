@@ -942,6 +942,36 @@ export function rayPlayer(o: Vec3, d: Vec3, p: PlayerPose, maxT: number, keep = 
 }
 
 /**
+ * Like `rayPlayer`, plus the part of the capsule that was hit first (the head
+ * when the head counts, as in `rayPlayer`; else the nearest body capsule).
+ * Tournament damage depends on it (modes/tournament/damage.ts).
+ */
+export function rayPlayerPart(o: Vec3, d: Vec3, p: PlayerPose, maxT: number, keep = false): (RayHit & { part: PlayerPart }) | null {
+	toModel(o, d, p);
+	if (!near(0)) return null;
+	poseTop(p, keep);
+	if (nearLegs(0)) poseLegs();
+	let th = -1;
+	let tb = -1;
+	let pb = 0;
+	for (let i = 0; i < count; i++) {
+		if (i === LEG_PARTS && !legsPosed) i = PARTS;
+		if (i >= count) break;
+		const t = rayCapsule(i * STRIDE, 0);
+		if (t < 0) continue;
+		if (PART[i] === HEAD) {
+			if (th < 0 || t < th) th = t;
+		} else if (tb < 0 || t < tb) {
+			tb = t;
+			pb = PART[i]!;
+		}
+	}
+	if (th >= 0 && th <= maxT && (tb < 0 || th <= tb)) return { t: th, head: true, part: 'head' };
+	if (tb >= 0 && tb <= maxT) return { t: tb, head: false, part: PLAYER_PARTS[pb]! };
+	return null;
+}
+
+/**
  * A ball of `radius` moving from `o` along unit `d` (a throwing knife): the
  * distance at which it first touches a capsule within `maxT`, or -1.
  */

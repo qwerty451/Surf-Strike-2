@@ -753,6 +753,13 @@ export class Lobby {
 				if (msg.type === 'boxOpen') return this.shop.openBox(c, k > RATE.shop.limit);
 				return this.shop.handle(c, msg, k > RATE.shop.limit);
 			}
+			case 'trnBet': {
+				// Tournament bets (docs/economy.md#tournament): lobby spectators may bet too; the casino's rate limit.
+				const k = c.rate.casino.hit(t);
+				if (k > RATE.casino.kick) return this.kick(c, 'casino flood');
+				if (!c.closed && k <= RATE.casino.limit) this.mode.message?.(c, msg);
+				return;
+			}
 			case 'casinoBet':
 			case 'crashCashout': {
 				const k = c.rate.casino.hit(t);
@@ -1401,7 +1408,7 @@ export class Lobby {
 	}
 
 	private send(c: Client, msg: ServerMessage): void {
-		if ((msg.type === 'hns' || msg.type === 'inf' || msg.type === 'zm' || msg.type === 'zd') && msg.ev.e === 'spawn' && msg.ev.id === c.id) {
+		if ((msg.type === 'hns' || msg.type === 'inf' || msg.type === 'zm' || msg.type === 'zd' || msg.type === 'trn') && msg.ev.e === 'spawn' && msg.ev.id === c.id) {
 			c.pendingSpawn = 'pos' in msg.ev ? msg.ev.pos : { x: msg.ev.x, y: msg.ev.y, z: msg.ev.z };
 			c.state = null;
 			c.spawnSeq = c.spawnSeq === 0xffff ? 1 : c.spawnSeq + 1;

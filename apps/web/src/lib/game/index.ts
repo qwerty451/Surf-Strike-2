@@ -51,6 +51,7 @@ const inertApi: GameApi = {
 	modeUi: () => {},
 	itemPicture: () => Promise.resolve(null),
 	rtvVote: noop,
+	trnBet: noop,
 	admin: noop
 };
 

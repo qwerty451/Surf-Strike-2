@@ -154,7 +154,7 @@ describe('account_stats migration', () => {
 			TABLES.map((t) => [t, (d.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).filter((c) => !(c.name in (ADDED[t] ?? {})))])
 		)
 	});
-	const NEW_TABLES = ['account_stats', 'point_log', 'point_rollup', 'abuse_log', 'owned_items', 'equipped', 'casino_log', 'casino_stats', 'casino_crash', 'server_settings'];
+	const NEW_TABLES = ['account_stats', 'point_log', 'point_rollup', 'abuse_log', 'owned_items', 'equipped', 'casino_log', 'casino_stats', 'casino_crash', 'server_settings', 'trn_bets'];
 
 	it('the schema with account_stats (before points): totals and permanent bans stay, new columns start empty', () => {
 		const dir = mkdtempSync(join(tmpdir(), 'surf-db-'));

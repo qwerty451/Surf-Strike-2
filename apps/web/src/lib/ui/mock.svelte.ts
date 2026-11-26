@@ -16,6 +16,8 @@
  * Infected: `&mode=infected` shows the Infected HUD: `&scene=` one of
  * INF_MOCK_SCENES (infected-mock.ts), `&vote=1` keeps the map vote open, `&keys=0` hides
  * the keys display. `&scale=1` forces `--hud-scale`.
+ * Tournament: `&mode=tournament` shows the Tournament HUD: `&scene=` one of TRN_MOCK_SCENES
+ * (tournament-mock.ts), `&entrants=2..16` the bracket size (default 8), `&bracket=1` (or hold B) the tree.
  */
 import { cosmeticPrice, COSMETIC_SLOTS, CASINO_MAX_BET, CASINO_MIN, coinflipPayout, crashPayout, crashState, pts, rollCoin, rollCrash, rollSlots, slotPayout, emptyLoadout, gameMode, getCosmetic, isGameModeId, listCosmetics, LOOTBOX, lootItems, registerCosmetic, rollLoot, shopItems, Status, TICK_RATE, type RarityId, type GameModeId, type LootRarity, type ModeState, type ScoreRow, type CasinoOutcome } from '@surf/shared';
 import { itemMesh, registerItemMesh } from '#lib/render/character/items.js';
@@ -26,6 +28,7 @@ import { awardPopup, noticePopup } from '#lib/game/coins.js';
 import type { GameApi, GameHandle, HudStateShape } from '#lib/game/contract.js';
 import { isDefenseMockScene, mockDefenseState, mockDefenseView, mockMenu, sceneMenu, type DefenseMockScene } from '#lib/ui/defense-mock.js';
 import { infMockSpectates, isInfMockScene, mockInfectedView, type InfMockScene } from '#lib/ui/infected-mock.js';
+import { isTrnMockScene, mockTournamentView, type TrnMockScene } from '#lib/ui/tournament-mock.js';
 
 const T = TICK_RATE;
 
@@ -79,7 +82,8 @@ function mockRows(mode: GameModeId, n: number, self: number, old: boolean): Scor
 				status: i === 2 ? Status.Alpha : i % 2 ? Status.Infected : Status.Alive
 			},
 			hns: { score, kills: i % 4, status: i % 3 === 1 ? Status.Seeker : Status.Hider },
-			defense: { kills: Math.max(0, 90 - i * 9), score: 1200 - i * 90, status: i % 4 === 3 ? Status.Down : Status.Alive }
+			defense: { kills: Math.max(0, 90 - i * 9), score: 1200 - i * 90, status: i % 4 === 3 ? Status.Down : Status.Alive },
+			tournament: { score: Math.max(0, 3 - i), kills: Math.max(0, 9 - 2 * i), status: i >= 5 ? Status.Spectating : i % 3 === 2 ? Status.Down : Status.Alive }
 		};
 		rows.push({ ...base, ...byMode[mode] });
 	}
@@ -113,9 +117,13 @@ function mockOwned(n: number): string[] {
 }
 
 /** Only what the score metrics read of a mode state. */
-function mockState(mode: GameModeId, rows: ScoreRow[]): ModeState | null {
+function mockState(mode: GameModeId, rows: ScoreRow[], trn: TrnMockScene | null = null, entrants = 8): ModeState | null {
 	if (mode === 'surf' || mode === 'bhop') return null;
 	if (mode === 'defense') return mockDefenseState(rows);
+	if (mode === 'tournament') {
+		const v = mockTournamentView(trn ?? 'duel', performance.now(), entrants);
+		return v.state ? { mode: 'tournament', ...v.state } : null;
+	}
 	const players = rows.map((r, i) => ({ id: r.id, team: r.status === Status.Alive ? 'survivor' : 'infected', streak: i * 3 }));
 	return { mode, phase: 'playing', round: 12, progress: 0.43, checkpoint: 2, checkpoints: 5, players } as unknown as ModeState;
 }
@@ -135,6 +143,8 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 	const infScene: InfMockScene | null = params.get('mode') === 'infected' ? (isInfMockScene(sceneParam) ? sceneParam : 'survivor') : null;
 	const defScene: DefenseMockScene | null = mode === 'defense' ? (isDefenseMockScene(sceneParam) ? sceneParam : 'build') : null;
 	let defPage = defScene ? sceneMenu(defScene) : null;
+	const trnScene: TrnMockScene | null = params.get('mode') === 'tournament' ? (isTrnMockScene(sceneParam) ? sceneParam : 'duel') : null;
+	const trnEntrants = Number(params.get('entrants') ?? 8) || 8;
 	const scale = params.get('scale');
 	if (scale) document.documentElement.style.setProperty('--hud-scale', scale);
 	if (params.has('boxall')) mockOwned(130);
@@ -144,8 +154,8 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		connecting: false,
 		playerCount: 12,
 		maxPlayers: 32,
-		mapId: infScene ? 'infected_outpost' : defScene ? 'defense_blackthorn' : 'surf_ember',
-		mapTitle: infScene ? 'Outpost' : defScene ? 'Blackthorn Farm' : 'Ember',
+		mapId: infScene ? 'infected_outpost' : defScene ? 'defense_blackthorn' : trnScene ? 'trn_glass' : 'surf_ember',
+		mapTitle: infScene ? 'Outpost' : defScene ? 'Blackthorn Farm' : trnScene ? 'Glass Arena' : 'Ember',
 		mapTimeLeft: 462,
 		gameMode: mode,
 		modeFamily: gameMode(mode).family,
@@ -154,6 +164,8 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		defense: defScene ? mockDefenseView(defScene, t0) : null,
 		infected: infScene ? mockInfectedView(infScene, t0) : null,
 		hns: null,
+		tournament: trnScene ? mockTournamentView(trnScene, t0, trnEntrants) : null,
+		bracketHeld: params.get('bracket') === '1',
 		maps: [
 			{ id: 'surf_aurora', title: 'Aurora', kind: 'surf', difficulty: 'easy' },
 			{ id: 'surf_ember', title: 'Ember', kind: 'surf', difficulty: 'hard' },
@@ -318,7 +330,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 				],
 		selfId: selfPos,
 		selfName: 'you',
-		modeState: mockState(mode, rows),
+		modeState: mockState(mode, rows, trnScene, trnEntrants),
 		spectating: infScene && infMockSpectates(infScene) ? { targetName: 'glidepath', freeFly: false } : null,
 		consoleOpen: open === 'console',
 		consoleLines: [
@@ -435,6 +447,15 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		closeSettings: () => (hud.settingsOpen = false),
 		vote(option) {
 			if (hud.vote) hud.vote.myVote = option;
+		},
+		trnBet(pick) {
+			const t = hud.tournament;
+			const b = t?.bet;
+			if (!t || !b || !b.canBet) return;
+			const side = b.a.id === pick ? b.a : b.b;
+			const a = b.a.id === pick ? { ...b.a, count: b.a.count + 1 } : b.a;
+			const bb = b.b.id === pick ? { ...b.b, count: b.b.count + 1 } : b.b;
+			hud.tournament = { ...t, bet: { ...b, a, b: bb, canBet: false, mine: { pick, name: side.name }, note: { text: `Your bet: 20 on ${side.name}`, tone: 'ok', at: performance.now() } } };
 		},
 		rtvVote(yes) {
 			const r = hud.rtvRequest;
@@ -614,15 +635,19 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			hud.spectating = hud.spectating ? null : { targetName: 'glidepath', freeFly: false };
 		} else if (e.key === 'r') {
 			hud.splitPopup = { label: 'Stage 4', ticks: hud.runTicks, delta: Math.round(0.42 * T), at: performance.now() };
+		} else if (e.key === 'b' && trnScene) {
+			hud.bracketHeld = true;
 		} else if (hud.rtvRequest && (e.key === '1' || e.key === '2')) api.rtvVote(e.key === '1');
 		else if (hud.defense?.menu && e.key >= '1' && e.key <= '9') mockModeUi({ kind: 'pick', index: Number(e.key) - 1 });
 		else if (defScene && (e.key === 'b' || e.key === 'e')) {
 			defPage = hud.defense?.menu ? (defPage === 'shop' || defPage === 'pad' || defPage === 'turret' ? null : 'shop') : e.key === 'b' ? 'shop' : 'pad';
 			hud.defense = mockDefenseView(defScene, performance.now(), defPage);
-		} else if (e.key >= '1' && e.key <= '9') api.vote(Number(e.key));
+		} else if (hud.tournament?.bet?.canBet && (e.key === '1' || e.key === '2')) api.trnBet(e.key === '1' ? hud.tournament.bet.a.id : hud.tournament.bet.b.id);
+		else if (e.key >= '1' && e.key <= '9') api.vote(Number(e.key));
 	};
 	const up = (e: KeyboardEvent) => {
 		if (e.key === 'Tab') hud.scoreboardOpen = false;
+		if (e.key === 'b' && trnScene && params.get('bracket') !== '1') hud.bracketHeld = false;
 	};
 	window.addEventListener('keydown', down);
 	window.addEventListener('keyup', up);
@@ -663,6 +688,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 	const ctx = canvas.getContext('2d');
 	let raf = 0;
 	let infAt = t0;
+	let trnAt = t0;
 	const frame = () => {
 		const t = (performance.now() - t0) / 1000;
 		const s = 1200 + Math.sin(t * 0.8) * 300;
@@ -674,6 +700,12 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		if (infScene && performance.now() - infAt > 1000) {
 			infAt = performance.now();
 			hud.infected = mockInfectedView(infScene, infAt);
+		}
+		// Tournament: replay the scene every few seconds (flashes, clocks), keeping a bet placed in the mock.
+		if (trnScene && performance.now() - trnAt > 6000) {
+			trnAt = performance.now();
+			const v = mockTournamentView(trnScene, trnAt, trnEntrants);
+			hud.tournament = hud.tournament?.bet?.mine && v.bet && !v.bet.mine ? { ...v, bet: { ...hud.tournament.bet, note: null } } : v;
 		}
 		if (ctx) {
 			const { width: w, height: h } = canvas;

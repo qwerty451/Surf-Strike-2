@@ -17,6 +17,9 @@ import type {
 	InfPerkId,
 	InfPhase,
 	InfTeam,
+	TrnPhase,
+	TrnRole,
+	TrnStateView,
 	CosmeticItem,
 	CosmeticSlot,
 	Loadout,
@@ -384,6 +387,93 @@ export interface InfectedView {
 	practice?: boolean;
 }
 
+/** One side of the live duel on the tournament duel bar. */
+export interface TrnDuelSide {
+	id: number;
+	name: string;
+	hp: number;
+	/** Round wins in this duel. */
+	wins: number;
+	/** The local player. */
+	self: boolean;
+}
+
+/** Bets on the current or next duel, as the bet panel shows them. */
+export interface TrnBetPanel {
+	match: number;
+	open: boolean;
+	a: { id: number; name: string; count: number };
+	b: { id: number; name: string; count: number };
+	/** The local player may bet now (logged in, not one of the two, no bet yet, bets open). */
+	canBet: boolean;
+	/** My accepted bet on this match. */
+	mine: { pick: number; name: string } | null;
+	/** Latest answer or outcome for this match (refusal reason, win, loss, refund). */
+	note: { text: string; tone: 'ok' | 'bad' | 'won' | 'lost' | 'refund'; at: number } | null;
+}
+
+/** Tournament HUD (docs/modes.md#tournament, docs/ui.md#tournament-hud); null in other modes. */
+export interface TournamentView {
+	/** 'solo': offline free roam (a tournament needs a server and 2+ players). */
+	phase: TrnPhase | 'solo';
+	tournament: number;
+	/** "Semifinal", "Final" … of the live or next duel ('' outside a tournament). */
+	roundLabel: string;
+	/** performance.now() when the phase or the duel round ends (0: no clock). */
+	endsAt: number;
+	/** Role of the viewed player (spectate target, else me). */
+	role: TrnRole;
+	/** I am not an entrant of the running tournament (joined late). */
+	late: boolean;
+	/** I am an entrant and was knocked out. */
+	out: boolean;
+	entrants: number;
+	prize: number;
+	duel: {
+		a: TrnDuelSide;
+		b: TrnDuelSide;
+		/** Duel round, 1-based. */
+		round: number;
+		/** performance.now() when the freeze ends (0: live). */
+		freezeUntil: number;
+	} | null;
+	/** Next duel's names between duels (bracket phase). */
+	next: { a: string; b: string } | null;
+	champion: { id: number; name: string; self: boolean } | null;
+	/** Short event banner (duel start, round won, champion). */
+	flash: { text: string; sub?: string; at: number; tone: 'duel' | 'win' | 'lose' | 'info' | 'gold' } | null;
+	/** The tree overlay shows by itself (bracket and ended phases). */
+	showBracket: boolean;
+	/** Mode state for the bracket overlay (null before the first). */
+	state: TrnStateView | null;
+	selfId: number;
+	bet: TrnBetPanel | null;
+	/** My latest bet outcome, shown for a few seconds even after the bets moved on to the next duel. */
+	betResult: { text: string; tone: 'won' | 'lost' | 'refund'; at: number } | null;
+	// Weapons of the local player
+	alive: boolean;
+	/** Spectators carry the knife only. */
+	knifeOnly: boolean;
+	weapon: WeaponId;
+	weaponLabel: string;
+	mag: number;
+	magSize: number;
+	reserve: number;
+	reloadEndsAt: number;
+	reloadMs: number;
+	hitMarker: { at: number; head: boolean; kill: boolean } | null;
+	hurtAt: number;
+	killFeed: KillFeedLine[];
+	/** Sniper scope up (the crosshair hides). */
+	scoped: boolean;
+	/** Scope overlay progress 0..1. */
+	scopeT: number;
+	/** Aim progress 0..1 (eased); 0 while spectating. */
+	aimT: number;
+	/** Spectating someone (or free-fly): local weapons and feedback are hidden. */
+	spectating: boolean;
+}
+
 /** What the infected HUD shows of a spectated player (only what `modeState` carries). */
 export interface InfSpecView {
 	id: number;
@@ -523,6 +613,9 @@ export interface HudStateShape {
 	defense: DefenseView | null;
 	infected: InfectedView | null;
 	hns: HnsView | null;
+	tournament: TournamentView | null;
+	/** Tournament: the bracket hold key (`+bracket`, B) is down. */
+	bracketHeld: boolean;
 	/** Rotation maps, in rotation order (Esc menu, Change map). */
 	maps: MapListEntry[];
 	/** Solo, or online as the only connected client: the Esc menu may switch maps directly. */
@@ -643,6 +736,8 @@ export interface GameApi {
 	vote(option: number): void;
 	/** Answer the open RTV request (same as keys 1 / 2). */
 	rtvVote(yes: boolean): void;
+	/** Tournament: bet TRN_BET coins on duelist `pick` of the current or next duel (same as keys 1 / 2 while betting). */
+	trnBet(pick: number): void;
 	/**
 	 * Pick a map from Change map: switch at once (solo, or online when alone;
 	 * see canChangeMap), otherwise start an RTV request nominating it.
@@ -686,7 +781,7 @@ export interface GameApi {
  *
  * Keyboard/mouse ownership:
  * - The engine listens on window for keys/mouse and runs binds (movement,
- *   Y = openChat, ` / ~ = toggleConsole, Tab = scoreboard while held, 1-7 map vote /
+ *   Y = openChat, ` / ~ = toggleConsole, Tab = scoreboard while held, 1-9 map vote /
  *   1-2 RTV request (vote.ts routeVoteKey, ahead of binds),
  *   M spectate, R restart, wheel jump). Pointer-lock loss while no overlay is
  *   open sets settingsOpen = true (browsers swallow Esc when exiting lock).

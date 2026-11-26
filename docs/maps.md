@@ -1,6 +1,6 @@
 # Maps
 
-Nine original maps across three gamemodes: surf_aurora (easy), surf_ember, surf_skyrend (staged, 7 stages), surf_hadal (linear, 8 sections); bhop_meadow (easy), bhop_circuit, bhop_reliquary (sunken temple), bhop_rimefall (night glacier); tag_quayside (harbour town, see [modes.md](modes.md)). The four original designs are described below; the newer maps document their layout in their source files. Each has its own theme. None of them copies an existing community map; they use the genre's standard building blocks (surf ramps, transfers, bhop blocks).
+Original maps across the gamemodes: surf_aurora (easy), surf_ember, surf_skyrend (staged, 7 stages), surf_hadal (linear, 8 sections), surf_kessler, surf_ochre; bhop_meadow (easy), bhop_circuit, bhop_reliquary (sunken temple), bhop_rimefall (night glacier); tag_quayside (harbour town, see [modes.md](modes.md)); zombies_lowtide; infected_outpost, infected_terminal, infected_foundry; hns_lido / hns_lido_m; tournament_orangery. The four original designs are described below; the newer maps document their layout in their source files. Each has its own theme. None of them copies an existing community map; they use the genre's standard building blocks (surf ramps, transfers, bhop blocks).
 
 ## Map format
 
@@ -10,7 +10,7 @@ Maps are TypeScript modules in `packages/shared/maps/`, built from code so both 
 interface MapDef {
   id: string;                  // "surf_aurora"
   title: string;               // "Aurora"
-  kind: GameModeId;            // the gamemode: 'surf' | 'bhop' | 'tag' | 'zombies' | 'hns' (modes.md)
+  kind: GameModeId;            // the gamemode: 'surf' | 'bhop' | 'tag' | 'zombies' | 'infected' | 'hns' | 'tournament' (modes.md)
   difficulty: 'easy' | 'hard';
   size?: 'medium' | 'large'; // maps that come in sizes: shown instead of the difficulty
   layout: 'linear' | 'staged' | 'open';  // 'open' = tag maps
@@ -19,6 +19,7 @@ interface MapDef {
   spawns?: Spawn[];            // tag (required, >= 8): random spawns for joins and fall-outs
   hns?: { hiderSpawns: Spawn[]; seekerSpawns: Spawn[]; seekerCage?: { min: Vec3; max: Vec3 }; cashBag?: { pos: Vec3; place: string } };  // hide and seek (required there): >= 8 hider spawns, >= 2 seeker spawns (modes.md#hide-and-seek)
   defense?: DefenseMapInfo;    // Zombie Defense (required there): openings, turret pads, zombie spawn areas, nav graph (see below)
+  tournament?: { duelSpawns: [Spawn, Spawn]; arena: { min: Vec3; max: Vec3 }; deck: { min: Vec3; max: Vec3 }; deckSpawns: Spawn[] };  // tournament (required there): >= 8 deck spawns (modes.md#tournament)
   brushes: Brush[];            // solid convex brushes
   zones: Zone[];               // start, end, stage/checkpoint, teleport
   theme: Theme;                // sky, fog, palette, lights, materials
@@ -163,6 +164,17 @@ A seaside resort in a cove, 9216 × 7680 (x [-4608, 4608], y [-3840, 3840]), bui
 The **cash bag** spot (`cashBag`, per size in `maps/hns_lido-variant.ts`) is open plaza ground: Large (320, −64, 0), east of the fountain, 326 units from the arena's centre; Medium (−1664, 0, 0), the exact centre, between the bandstand and the chapel. The tests check 96 free units around it, ground, open sky, distance to the centre, spots, teleporters and cage, and that it is walked to without a jump from the cage and every hider spawn.
 
 `hns_lido.test.ts` runs every check on both sizes and proves them with the real collision and movement: no intersecting solid boxes, free spawns and destinations, closed boundary (sampled), non-solid fakes, crawlspaces (stand blocked, duck passes), the crouch-jump climbs with `playerMove`, and a conservative reachability graph (`maps/hns-nav.ts`: 32-unit columns plus explicit points, box-path moves with walk ≤ 18 rise, jump 50, crouch-jump 62, duck-jump 48) showing every spot and teleporter is reachable from the hider spawns and from the cage, nothing reachable is a trap (everything leads back to the cage) or outside the boundary, and the farthest walking route is ~14 200 units (~57 s at 250 u/s).
+
+## tournament_orangery — Tournament, open ("Orangery")
+
+Theme: an old garden orangery at dusk. Pale limestone walls, a terracotta floor with a flagstone aisle, white cast-iron columns and roof ribs, hedge planters and potted orange trees, warm lanterns, a lawn with hedges and cypresses outside, fireflies. Source and numbers: `maps/tournament_orangery.ts`.
+
+- **Hall (the arena):** 1536 × 1024 (x [−768, 768], y [−512, 512]), floor at 0. Point-symmetric through the centre: every brush has a twin at (−x, −y) with the same size and material, and the duel spawns (−672, 0) facing east and (672, 0) facing west are each other's mirror image.
+- **Cover:** a fountain in the centre (rim 40) with an iron column to the roof that blocks the spawn-to-spawn line; a hedge planter (56) in front of each spawn; a raised corner terrace (96, NW for the west duelist, SE for the east) with a jump step (48) and a balustrade (128); four iron columns on plinths; two crate stacks (32 / 64 / 96); two low walls (48); two long hedge planters (72) by the long walls; four potted orange trees whose canopies (104–184) are the highest cover, reached by a running jump from the balustrade.
+- **Roof:** iron ribs (432–448) under one glass slab (448–464) sealed into the walls. From the highest cover (184) a crouch jump keeps the head ~110 under the ribs.
+- **Deck:** the glass top (464), the full 1536 × 1024, with 12 deck spawns in a 4 × 3 grid, lamp posts in the corners, a stone parapet, glass rail and brass handrail to 600 and an invisible clip to 848 over the wall tops. A jump on the glass rises ~66, so nobody gets near the rail top.
+
+`tournament_orangery.test.ts` proves with the real collision and movement: brushes and spawns are mirror-symmetric; spawns stand free on the floor / glass inside `arena` / `deck`; the hall is sealed (point samples every 8 units just outside the floor, walls and roof are solid, the roof is all glass; hull traces from a grid inside the hall never get out); the deck is walled in to the clip; bots (`playerMove`, the tournament cvars, auto bhop, air strafe, crouch jumps, up to 3000 u/s) from every deck spawn and along every rail and corner never enter the arena or leave the deck, and bots from the highest cover and the duel spawns never reach the deck or the roof.
 
 ## Default map
 

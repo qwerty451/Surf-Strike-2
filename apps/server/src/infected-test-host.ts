@@ -69,7 +69,9 @@ function noEconomy(acted: number[]): ModeEconomy {
 		contact: () => {},
 		report: () => {},
 		teleported: () => {},
-		acted: (id) => void acted.push(id)
+		acted: (id) => void acted.push(id),
+		betOpen: () => null,
+		betClose: () => false
 	};
 }
 

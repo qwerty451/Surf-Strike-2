@@ -1,4 +1,4 @@
-/** Test double of ClientModeHost for the modes with weapons (zombies, infected, defense). */
+/** Test double of ClientModeHost for the modes with weapons (zombies, infected, defense, tournament). */
 import { buildCollisionWorld, createPlayer, mapCvars, type MapDef } from '@surf/shared';
 import { vi } from 'vitest';
 import { emptySample } from '../../net/interp.js';
@@ -18,7 +18,7 @@ export function mocks<T extends object>(own: Partial<T> = {}): T {
 }
 
 /** Online as player 7, at the map's spawn. `hudWrites`: every HUD view the mode published, oldest first. */
-export function fakeHost(map: MapDef, view: 'zombies' | 'infected' | 'defense') {
+export function fakeHost(map: MapDef, view: 'zombies' | 'infected' | 'defense' | 'tournament') {
 	const hudWrites: unknown[] = [];
 	const hud = {
 		get [view]() {

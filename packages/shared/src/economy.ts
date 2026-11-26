@@ -183,6 +183,13 @@ export const INFECTED_PAY = Object.freeze({
 	surviveShare: 1
 });
 
+/**
+ * Tournament (docs/economy.md#tournament). Duel kills pay `kill`; the champion
+ * gets `trnPrize(n)` whole coins (modes/tournament/net.ts), n = entrants who
+ * played a live duel round. Bets are not awards: see `TRN_BET` and the casino path.
+ */
+export const TOURNAMENT_PAY = Object.freeze({ kill: pts(1) });
+
 /** Chase and view ranges (units) for `HuntTracker` (modes/hunt.ts). */
 export const HUNT_RANGE = Object.freeze({ tagChase: 500, hnsChase: 600, hnsView: 2000 });
 
@@ -238,7 +245,11 @@ const defs = {
 	infSpecialist: { label: 'Specialist', perRound: INFECTED_PAY.specialist },
 	infMoab: { label: 'M.O.A.B.' },
 	infBeacon: { label: 'Beacon smashed', perRound: INFECTED_PAY.beacon },
-	infWin: { label: 'Infected win', perRound: INFECTED_PAY.winPatientZero }
+	infWin: { label: 'Infected win', perRound: INFECTED_PAY.winPatientZero },
+
+	trnKill: { label: 'Duel kill' },
+	/** Exempt from the backstop: one payout per tournament, up to 32 coins, earned over many duels. */
+	trnChampion: { label: 'Tournament champion', exempt: true }
 } satisfies Record<string, AwardDef>;
 
 export type AwardReason = keyof typeof defs;
@@ -281,7 +292,8 @@ export const SPEED_LIMIT: Readonly<Record<GameModeId, number>> = Object.freeze({
 	zombies: 1_000,
 	infected: 1_000,
 	hns: 600,
-	defense: 1_000
+	defense: 1_000,
+	tournament: 3_500
 });
 
 /** Base points per rolling hour and account, exempt reasons aside. */

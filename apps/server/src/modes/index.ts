@@ -5,6 +5,7 @@ import { HnsMode, hnsEnvOptions, type HnsModeOptions } from './hns.ts';
 import { InfectedMode, type InfectedModeOptions } from './infected.ts';
 import { RaceMode } from './race.ts';
 import { TagMode, type TagModeOptions } from './tag.ts';
+import { TournamentMode, type TournamentModeOptions } from './tournament.ts';
 import type { ModeHost, ServerMode } from './types.ts';
 import { ZombiesMode, type ZombiesModeOptions } from './zombies.ts';
 
@@ -16,6 +17,8 @@ export interface ModeOptions {
 	hns?: HnsModeOptions;
 	/** Zombie Defense phase lengths and spawning (tests). */
 	defense?: DefenseModeOptions;
+	/** Tournament phase lengths (tests); default the rule constants. */
+	tournament?: TournamentModeOptions;
 }
 
 export function createServerMode(host: ModeHost, opts: ModeOptions = {}): ServerMode {
@@ -33,8 +36,10 @@ export function createServerMode(host: ModeHost, opts: ModeOptions = {}): Server
 			return new HnsMode(host, { ...hnsEnvOptions(), ...opts.hns });
 		case 'defense':
 			return new DefenseMode(host, opts.defense);
+		case 'tournament':
+			return new TournamentMode(host, opts.tournament);
 	}
 }
 
 export type { ModeHost, ModePlayer, ServerMode } from './types.ts';
-export { DefenseMode, HnsMode, InfectedMode, RaceMode, TagMode, ZombiesMode };
+export { DefenseMode, HnsMode, InfectedMode, RaceMode, TagMode, TournamentMode, ZombiesMode };

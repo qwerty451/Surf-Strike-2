@@ -10,6 +10,8 @@ import {
 	scoreboardColumns,
 	splitScoreboard,
 	statusText,
+	trnRoundLabel,
+	trnStatusText,
 	type ScorePanelInput
 } from './score.ts';
 
@@ -224,6 +226,53 @@ describe('standing score panel', () => {
 	it('no mode state yet, nobody playing', () => {
 		for (const id of GAME_MODE_IDS) expect(() => panel(id, {})).not.toThrow();
 		expect(panel('hns', {}).empty).toBe('No players');
+	});
+});
+
+describe('tournament score', () => {
+	const bracket = (n: number) => ({
+		size: 2 ** Math.ceil(Math.log2(n)),
+		entrants: Array.from({ length: n }, (_, i) => ({ id: i + 1, name: `P${i + 1}`, seed: i, out: false, left: false })),
+		matches: []
+	});
+	const trn = (p: object) => ({ mode: 'tournament', phase: 'duel', tournament: 1, round: 1, timeLeft: 30, bracket: bracket(5), duel: null, bets: null, champion: null, ...p }) as ModeState;
+	it('round labels count back from the final', () => {
+		expect([1, 2, 3, 4].map((r) => trnRoundLabel(r, 16))).toEqual(['Round 1', 'Quarterfinal', 'Semifinal', 'Final']);
+		expect(trnRoundLabel(1, 2)).toBe('Final');
+		expect(trnRoundLabel(1, 4)).toBe('Semifinal');
+		expect(trnRoundLabel(0, 8)).toBe('');
+	});
+	it('status: in, out, watching', () => {
+		expect(trnStatusText(row({ status: Status.Alive }))).toBe('In');
+		expect(trnStatusText(row({ status: Status.Down }))).toBe('Out');
+		expect(trnStatusText(row({ status: Status.Spectating }))).toBe('Watching');
+		expect(trnStatusText(row({ status: Status.Alive, spectating: true }))).toBe('Watching');
+		expect(trnStatusText(row({ status: Status.Idle }))).toBe('–');
+	});
+	it('live entrants first, then by duels won and kills; watchers apart', () => {
+		const rows = [
+			row({ id: 1, name: 'out-big', status: Status.Down, score: 3, kills: 9 }),
+			row({ id: 2, name: 'in-1', status: Status.Alive, score: 1, kills: 2 }),
+			row({ id: 3, name: 'in-2', status: Status.Alive, score: 2, kills: 1 }),
+			row({ id: 4, name: 'watch', status: Status.Spectating }),
+			row({ id: 5, name: 'in-1b', status: Status.Alive, score: 1, kills: 4 })
+		];
+		const def = gameMode('tournament').score;
+		const split = splitScoreboard(rows, def);
+		expect(split.players.map((r) => r.name)).toEqual(['in-2', 'in-1b', 'in-1', 'out-big']);
+		expect(split.spectators.map((r) => r.name)).toEqual(['watch']);
+		expect(cells('tournament', rows[2]!)).toMatchObject({ trnStatus: 'In', duels: '2', kills: '1' });
+		expect(cells('tournament', row({}))).toMatchObject({ duels: '0', kills: '0' });
+	});
+	it('panel: bracket round, prize, coins', () => {
+		const rows = [row({ id: 1, status: Status.Alive, score: 1 })];
+		const v = panel('tournament', { rows, state: trn({ round: 2, bracket: bracket(8) }) });
+		expect([v.title, v.subtitle]).toEqual(['Tournament', 'Semifinal']);
+		expect(v.heads.map((h) => h.id)).toEqual(['trnStatus', 'duels', 'kills']);
+		expect(v.summary).toEqual([{ id: 'prize', label: 'Prize', text: '32 coins', note: '8 entrants' }]);
+		expect(panel('tournament', { rows, state: trn({ bracket: bracket(3) }) }).summary[0]).toMatchObject({ text: '2 coins' });
+		expect(panel('tournament', { rows, state: trn({ phase: 'waiting', round: 0, bracket: null }) })).toMatchObject({ subtitle: '', summary: [] });
+		expect(panel('tournament', { rows, state: trn({ bracket: null, round: 3 }) }).subtitle).toBe('Round 3');
 	});
 });
 
