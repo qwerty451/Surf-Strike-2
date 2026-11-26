@@ -181,6 +181,8 @@ export function zdSpawnInterval(players: number): number {
 export const ZD_DEFAULT_PLANKS = 6;
 /** Tear time factor by "Reinforced" level (0..2). */
 export const ZD_REINFORCE_FACTORS = [1, 2, 3] as const;
+/** Tear time factor in waves 1, 2, ... (1 after the list), so repairing matters while the team has few turrets. */
+export const ZD_EARLY_TEAR = [2, 1.5] as const;
 
 // ---------------------------------------------------------------------------
 // Turrets

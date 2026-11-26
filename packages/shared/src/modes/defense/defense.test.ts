@@ -7,6 +7,7 @@ import { WEAPONS } from '../zombies/weapons.ts';
 import { defenseFixtureMap } from './fixture.ts';
 import { DefenseGame, defenseWorld, zdEventRoute, type DefenseGameOptions, type ZdEvent } from './game.ts';
 import { NavGraph } from './nav.ts';
+import { ZD_EARLY_TEAR } from './rules.ts';
 import { BIN_DEFENSE, decodeDefense, encodeDefense, ZDF_FROSTED, ZDF_TEARING, ZDT_FIRED } from './net.ts';
 import {
 	parseZdItem,
@@ -52,6 +53,7 @@ function setup(opts: Partial<DefenseGameOptions> = {}, players: number[] = [1]) 
 		buildSecs: 5,
 		endSecs: 2,
 		plan: () => [],
+		earlyTear: [],
 		...opts
 	});
 	const pos = new Map<number, Vec3>();
@@ -752,3 +754,30 @@ describe('players', () => {
 		expect(f.zombies[0]!.id).toBe(snap.zombies[0]!.id);
 	});
 });
+
+describe('tuning', () => {
+	it('tearing is slower in waves 1 and 2', () => {
+		expect(ZD_EARLY_TEAR[0]).toBe(2);
+		expect(ZD_EARLY_TEAR[1]).toBe(1.5);
+		const g = new DefenseGame({ map, world, cvars: mapCvars(map), now: T0 });
+		const tear = (wave: number) => {
+			(g as unknown as { wave: number }).wave = wave;
+			return (g as unknown as { tearMs(z: { kind: string }, op: { reinforce: number }): number }).tearMs({ kind: 'walker' }, { reinforce: 0 });
+		};
+		expect(tear(1)).toBe(3000);
+		expect(tear(2)).toBe(2250);
+		expect(tear(3)).toBe(1500);
+	});
+
+	it('the pistol reserve is topped up at the start of each build phase', () => {
+		const s = setup();
+		const ws = (s.g as unknown as { players: Map<number, { weapons: Map<string, { reserve: number; def: { reserve: number } }> }> }).players.get(1)!.weapons.get('pistol')!;
+		ws.reserve = 3;
+		s.g.act(1, { a: 'ready' }, s.now());
+		s.run(3000);
+		expect(s.g.phase).toBe('build');
+		expect(ws.reserve).toBe(ws.def.reserve);
+		expect(s.events.some((e) => e.e === 'ammo' && e.reserve === ws.def.reserve)).toBe(true);
+	});
+});
+

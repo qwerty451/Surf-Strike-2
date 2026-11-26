@@ -65,6 +65,7 @@ import {
 	ZD_REGEN_EVERY_MS,
 	ZD_REINFORCE_FACTORS,
 	ZD_REPAIR_MS,
+	ZD_EARLY_TEAR,
 	ZD_REPAIR_RANGE,
 	ZD_SHELL_SPEED,
 	ZD_SHOP,
@@ -393,6 +394,8 @@ export interface DefenseGameOptions {
 	maxZombies?: number;
 	/** Multiplies spawn intervals (tests: 1e9 = no automatic spawns after the first). */
 	spawnIntervalScale?: number;
+	/** Tests: tear time factors by wave instead of ZD_EARLY_TEAR ([] = none). */
+	earlyTear?: readonly number[];
 	/** Server: looser fire/reload timing (ZD_FIRE_TOLERANCE, ZD_RELOAD_TOLERANCE). */
 	lenient?: boolean;
 	/** Tests: start gold instead of ZD_GOLD.start. */
@@ -450,6 +453,7 @@ export class DefenseGame {
 	private readonly waveMaxMs: number;
 	private readonly maxZombies: number;
 	private readonly spawnScale: number;
+	private readonly earlyTear: readonly number[];
 	private readonly lenient: boolean;
 	private readonly startGold: number;
 	private readonly plan: ((wave: number, players: number) => ZdZombieKind[]) | null;
@@ -484,6 +488,7 @@ export class DefenseGame {
 		this.waveMaxMs = (opts.waveMaxSecs ?? ZD_WAVE_MAX_SECS) * 1000;
 		this.maxZombies = opts.maxZombies ?? ZD_MAX_ZOMBIES;
 		this.spawnScale = opts.spawnIntervalScale ?? 1;
+		this.earlyTear = opts.earlyTear ?? ZD_EARLY_TEAR;
 		this.lenient = opts.lenient ?? false;
 		this.startGold = opts.startGold ?? ZD_GOLD.start;
 		this.plan = opts.plan ?? null;
@@ -1104,6 +1109,12 @@ export class DefenseGame {
 				p.hp = this.maxHp(p);
 				i++;
 			}
+			// The free pistol is topped up every build phase, so a player out of gold can still shoot.
+			const pistol = p.weapons.get('pistol');
+			if (pistol && pistol.reserve < pistol.def.reserve) {
+				pistol.reserve = pistol.def.reserve;
+				if (p.held === 'pistol') this.pending.push(this.ammoEvent(p));
+			}
 		}
 		this.pending.push({ e: 'phase', phase: 'build', wave: this.wave + 1, round: this.round });
 	}
@@ -1610,7 +1621,8 @@ export class DefenseGame {
 	}
 
 	private tearMs(z: DefenseZombie, op: Opening): number {
-		return ZD_ZOMBIES[z.kind].tearMs * ZD_REINFORCE_FACTORS[Math.min(ZD_REINFORCE_FACTORS.length - 1, op.reinforce)]!;
+		const early = this.earlyTear[this.wave - 1] ?? 1;
+		return early * ZD_ZOMBIES[z.kind].tearMs * ZD_REINFORCE_FACTORS[Math.min(ZD_REINFORCE_FACTORS.length - 1, op.reinforce)]!;
 	}
 
 	/** Wind up on the nearest living player in reach and sight (not through planks), then hit if still in reach. */
