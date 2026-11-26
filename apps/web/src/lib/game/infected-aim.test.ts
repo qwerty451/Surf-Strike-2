@@ -231,8 +231,8 @@ describe('aim data (G9)', () => {
 	it('the HUD hides the crosshair through crosshairOpacity(aimT) and fades it on the way', () => {
 		const hud = readFileSync(new URL('../ui/Hud.svelte', import.meta.url), 'utf8');
 		const line = hud.split('\n').find((l) => l.includes('<Crosshair '))!;
-		expect(line).toContain('crosshairOpacity(hud.infected?.aimT) > 0');
-		expect(line).toContain('opacity={crosshairOpacity(hud.infected?.aimT)}');
+		expect(line).toContain('crosshairOpacity(hud.infected?.aimT ?? hud.tournament?.aimT) > 0');
+		expect(line).toContain('opacity={crosshairOpacity(hud.infected?.aimT ?? hud.tournament?.aimT)}');
 		const cross = readFileSync(new URL('../ui/Crosshair.svelte', import.meta.url), 'utf8');
 		expect(cross).toMatch(/style:opacity=\{opacity < 1 \? opacity : undefined\}/);
 	});

@@ -15,6 +15,8 @@ import type { InfHost, InfRole, InfSound } from './infected.js';
 
 type Ev<K extends InfEvent['e']> = Extract<InfEvent, { e: K }>;
 type World = Pick<CollisionWorld, 'trace'>;
+/** What the world feedback needs of a host (the tournament client shares these helpers). */
+export type FxHost = Pick<InfHost, 'infectedRenderer' | 'remotePlayers' | 'sound'>;
 
 /** Positional sounds of a body come from chest height above the feet. */
 export const BODY_SOUND_Z = 40;
@@ -41,8 +43,8 @@ const NOR = { x: 0, y: 0, z: 0 };
 const AV = emptyPose();
 const AV2 = emptyPose();
 
-const fxOf = (host: InfHost): InfectedFx | null => host.infectedRenderer()?.fx ?? null;
-const avatars = (host: InfHost): RemotePlayers | null => host.remotePlayers?.() ?? null;
+const fxOf = (host: FxHost): InfectedFx | null => host.infectedRenderer()?.fx ?? null;
+const avatars = (host: FxHost): RemotePlayers | null => host.remotePlayers?.() ?? null;
 
 /** Hit sound by the event flags: a kill beats a headshot; a beacon (target 0) keeps the plain hit. */
 export function hitSound(ev: Ev<'hit'>): InfSound {
@@ -51,7 +53,7 @@ export function hitSound(ev: Ev<'hit'>): InfSound {
 }
 
 /** My shot hit: the victim's avatar flashes, and the hit sounds. */
-export function hitFeedback(host: InfHost, ev: Ev<'hit'>, now: number): void {
+export function hitFeedback(host: FxHost, ev: Ev<'hit'>, now: number): void {
 	if (ev.targetId !== 0) avatars(host)?.flash(ev.targetId, now);
 	host.sound(hitSound(ev));
 }
@@ -172,7 +174,7 @@ function impact(fx: InfectedFx | null, world: World | null, o: Vec3, dx: number,
  * My own shot: the impact where its tracer ends on the map (`len` shorter
  * than the range). `sound`: play the impact sound (once per trigger pull).
  */
-export function localImpact(host: InfHost, world: World | null, eye: Vec3, d: Vec3, len: number, range: number, now: number, sound: boolean): void {
+export function localImpact(host: FxHost, world: World | null, eye: Vec3, d: Vec3, len: number, range: number, now: number, sound: boolean): void {
 	if (!impact(fxOf(host), world, eye, d.x, d.y, d.z, len, range, now)) return;
 	if (sound) host.sound('impact', { x: HIT.x, y: HIT.y, z: HIT.z });
 }
@@ -182,7 +184,7 @@ export function localImpact(host: InfHost, world: World | null, eye: Vec3, d: Ve
  * arm chop), one tracer per pellet from the muzzle of the gun it holds, and
  * an impact where each pellet met the map. One impact sound per shot.
  */
-export function shotFeedback(host: InfHost, world: World | null, r: ZombieRenderer | null, ev: Ev<'shot'>, now: number): void {
+export function shotFeedback(host: FxHost, world: World | null, r: ZombieRenderer | null, ev: Ev<'shot'>, now: number): void {
 	const players = avatars(host);
 	players?.fired(ev.by, now);
 	const def = WEAPONS[ev.weapon];

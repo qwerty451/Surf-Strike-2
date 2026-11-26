@@ -107,6 +107,17 @@ Shown on infected maps (`InfectedHud.svelte`, [modes.md](modes.md#infected)). Pu
 
 Dev preview: `/?mockhud&mode=infected&scene=<scene>` with the scenes `survivor`, `reload`, `low`, `empty`, `emptypistol`, `scope`, `scopedry`, `alpha`, `infected`, `down`, `last`, `stack`, `moab`, `ended`, `ended2`, `ended16`, `ended32`, `spec`, `specended`, `practice` and `practicescope` (list: `INF_MOCK_SCENES` in `ui/infected-mock.ts`). `&vote=1` keeps the map vote open, `&keys=0` hides the keys display, `&scale=1` forces `--hud-scale`. The mock re-issues the scene about once a second and shows popups and timed labels mid-life.
 
+## Tournament HUD
+
+Shown on tournament maps (`TournamentHud.svelte`, [modes.md](modes.md#tournament)). The client is `game/tournament.ts` behind `game/modes/tournament.ts`; texts, roles and bet eligibility are in `game/tournament-view.ts`, the bracket layout in `ui/bracket-layout.ts`.
+
+- **Top** (under the map name): during a duel the duel bar: both names (yours gold), round-win pips (first to 2), HP bars with the number (red at 30 or less, a dead duelist struck through), the bracket round (`Quarterfinal · R2`) and the round clock (red in the last 15 s). Under it during the freeze: "Round 2 starts in 3". Without a duel a banner: "Waiting for players · a tournament needs 2+" (offline: "Offline · …"), "Tournament 3 starts in 8" with "6 entrants · prize 16 coins", "Semifinal · Alice vs Bob" between duels, "Alice wins the tournament! · Prize 16 coins · next in 12" at the end. A late joiner reads "You are spectating · the next tournament starts soon", a knocked-out entrant "Knocked out · watch and bet from the deck". Short flashes: tournament starting, "Alice vs Bob" (with the bracket round), "Round 2 · Fight!", "Bob wins round 1" (on time, or "drawn · replayed") with the score, "You advance!" / "Knocked out" / "Alice advances" (by forfeit), "Killed by Bob", and the champion in gold.
+- **Bracket tree** (`Bracket.svelte`): a left-to-right tree of every match, one SVG, with the round names above the columns and a champion slot after the final. Winners are bold with an amber bar and score, losers struck through, entrants knocked out later dimmed, byes and their matches greyed, undecided slots "TBD", forfeits "FF", players who left "(left)". The live duel (or between duels the next one) is outlined amber with LIVE / NEXT. It shows by itself between duels and at the end, and while `B` (`+bracket`) is held. In a narrow window the compact layout is used, and below 72% of its size the earliest rounds are dropped first ("‹ 1 earlier round"), never the current one.
+- **Bet panel** (above the speedometer), when the server sends `bets` (brackets of 4+ entrants): logged-in players who are not one of the two duelists get "Bet 20 on Alice" / "Bet 20 on Bob" with the bet count per side. With the pointer locked, keys `1` / `2` bet (and the panel says so); with a free cursor (Esc, then Resume) the buttons can be clicked. After the answer: "Your bet: 20 on Alice", or the refusal ("Betting closed for this duel", "Not enough coins (bet is 20)", "You already bet on this duel", …); after the duel "Bet won · +40 coins", "Bet lost · −20 coins" or "Bet refunded · +20 coins". Closed bets show only to who has a stake or an answer.
+- **Screen**: sniper scope overlay (the crosshair hides; it fades as the sights come up), hit marker (as Infected), hurt vignette, the kill feed top right (`Alice · Sniper rifle · headshot › Bob`, deck knife fights end in `· deck`), and the weapon panel bottom right: `1 Sniper` `2 Pistol` `3 Knife` with ammo and the reload bar for duelists, "LMB Knife · spectators fight on the deck" for everyone else.
+
+Dev preview: `/?mockhud&mode=tournament&scene=<scene>` with the scenes `waiting`, `starting`, `freeze`, `duel`, `scoped`, `watch` (bets open), `bet` (bet placed), `betwon`, `bracket`, `ended`, `late`, `out` and `solo` (list: `TRN_MOCK_SCENES` in `ui/tournament-mock.ts`); `&entrants=2..16` sets the bracket size (default 8), `&bracket=1` (or holding `B`) shows the tree, `1` / `2` bet in the bet scenes. The mock replays its scene every 6 s.
+
 ## Infected practice range
 
 While the practice range is open ([modes.md](modes.md#practice-range): waiting for players, or offline), the waiting banner reads "Practice range · a round needs 2+ players" and a line under it names the keys of the held weapon: LMB Fire (Swing for melee), RMB Aim (Scope for the two rifles; nothing for melee), R Reload (guns), 1 2 3 Weapons, 4 Next primary. No score, kill feed or round summary. Dev preview: `/?mockhud&mode=infected&scene=practice` and `scene=practicescope`.
@@ -225,17 +236,18 @@ The race ghost ([gameplay.md](gameplay.md#ghosts)) is the player character ([cha
 | `Ctrl` | Crouch |
 | `Y` | Chat |
 | `Tab` | Scoreboard |
-| `1`–`9` | Map vote (while open); `1` / `2` = yes / no on an RTV request; else their binds (Zombie Run weapons `1`–`4`; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B., or next primary on the practice range) |
+| `1`–`9` | Map vote (while open); `1` / `2` = yes / no on an RTV request; else their binds (Zombie Run weapons `1`–`4`; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B., or next primary on the practice range; Tournament duelists `1` sniper, `2` pistol, `3` knife, spectators `1` / `2` bet while betting is open) |
 | `Mouse1` | Attack: fire, knife or claw swing |
-| `Mouse2` | Zombie Run: sniper scope. Infected: aim down sights (held; toggled with `cl_aimtoggle 1`), or throw the knife as infected |
+| `Mouse2` | Zombie Run: sniper scope. Infected and Tournament: aim down sights (held; toggled with `cl_aimtoggle 1`), or throw the knife as infected |
 | `M` | Toggle spectate |
-| `R` | Restart run (`!r`); Zombie Run / Infected reload |
+| `R` | Restart run (`!r`); Zombie Run / Infected / Tournament reload |
 | `E` | Infected: plant a respawn beacon (`beacon`) |
 | `N` | Infected: call an earned M.O.A.B. (`moab`) |
+| `B` | Tournament: hold to show the bracket (`+bracket`) |
 | `` ` `` / `~` | Console |
 | `Esc` | Esc menu |
 
-Binds added after a player first saved their table (`E` → `beacon`, `N` → `moab`) are offered once: they are filled in when the key is free and the command is not bound elsewhere, and the offered list is stored in `surf.binds.offered` so a later `unbind` sticks. In a window, `Ctrl`+`N` stays with the browser, so `N` does nothing while crouching; in fullscreen with the keyboard lock it works ([Platform](#platform)).
+Binds added after a player first saved their table (`E` → `beacon`, `N` → `moab`, `B` → `+bracket`) are offered once: they are filled in when the key is free and the command is not bound elsewhere, and the offered list is stored in `surf.binds.offered` so a later `unbind` sticks. In a window, `Ctrl`+`N` stays with the browser, so `N` does nothing while crouching; in fullscreen with the keyboard lock it works ([Platform](#platform)).
 
 ## Audio
 
