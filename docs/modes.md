@@ -250,7 +250,7 @@ CS:GO hide and seek was never an official mode; every community server ran its o
 - Positions are client-authoritative as in every mode: snapshots still carry every player's position, so a modified client could show hiders through walls. Server-side visibility culling is not done.
 - Sounds are real CC0 recordings (CREDITS.md): the knife swing (your own, or another seeker's within 1024 units, quieter with distance), the knife hit (for the finder and the found hider), and the existing gavel for the seeker release. The cash bag's appearance reuses the zone bell; no coin recording is sourced, so the pickup is silent.
 - No spectating while found (found hiders play on as seekers); spectating works as in every mode.
-- Map votes give hns no reserved slot (`VOTE_MAP_SLOTS` covers surf/bhop/tag/zombies); hns maps fill free slots like any map.
+- Map votes give hns one reserved slot (`VOTE_MAP_SLOTS`, like every other category; see gameplay.md#map-rotation-and-voting).
 
 
 ## Zombie Defense

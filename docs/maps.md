@@ -18,6 +18,7 @@ interface MapDef {
   spawn: { pos: Vec3; yaw: number };     // race: in the start zone; tag: fallback spawn
   spawns?: Spawn[];            // tag (required, >= 8): random spawns for joins and fall-outs
   hns?: { hiderSpawns: Spawn[]; seekerSpawns: Spawn[]; seekerCage?: { min: Vec3; max: Vec3 }; cashBag?: { pos: Vec3; place: string } };  // hide and seek (required there): >= 8 hider spawns, >= 2 seeker spawns (modes.md#hide-and-seek)
+  defense?: DefenseMapInfo;    // Zombie Defense (required there): openings, turret pads, zombie spawn areas, nav graph (see below)
   brushes: Brush[];            // solid convex brushes
   zones: Zone[];               // start, end, stage/checkpoint, teleport
   theme: Theme;                // sky, fog, palette, lights, materials
@@ -112,6 +113,37 @@ Theme: desert canyon at golden hour. Checkpoints are splits; any fall resets to 
 ## zombies_lowtide — Zombie Run, linear
 
 Theme: an abandoned seaside town at dusk in sea fog. Beach car park (start) → main street with side pockets and a barricade → narrow alley → promenade and a bridge over a creek → cannery yard → harbour road → pier with the evac boat. Five gates split it into six zones, each with a checkpoint and an unlock area before its gate. Zombie Run maps add `zombies: { path, spawnZones, gates }` (`ZombieRoute` in `maps/types.ts`): the waypoint route the AI follows, zombie spawn areas tagged with the route node they feed, and the gates (solid boxes outside `brushes`, an `unlock` area and a route `node`). Map tests check spawns, checkpoint respawns, waypoints and spawn areas stand free, and walk the whole route with the real movement at the slowest weapon speed; shared tests send a zombie from every spawn area to the evac point.
+
+## Zombie Defense maps
+
+A Zombie Defense map (`kind: 'defense'`, `layout: 'open'`) is a base the team holds against waves of zombies coming from every side (modes.md#zombie-defense). `MapDef.spawns` (>= 4) and `spawn` are inside the base. `MapDef.defense` (`DefenseMapInfo` in `maps/types.ts`) has four parts:
+
+- `openings`: the barricades. Each is a box (`min`..`max`) that exactly fills a gap in the base wall: the wall's full thickness, jamb to jamb, sill (or floor) to lintel. It is not in `brushes`: while the opening has at least one plank the mode adds the box to the collision (players and zombies), and bullets pass through it. `outside` and `inside` are nav node indices just outside (where zombies tear planks off) and just inside (where players repair). `planks` defaults to 6.
+- `pads`: fixed turret spots inside the base or on its walls (`pos` is the floor point, `yaw` the default facing).
+- `spawnZones`: zombie spawn areas outside, boxes standing on walkable floor (`min.z` = floor top), each with the nav `node` its zombies start from.
+- `nav`: the AI's walkable graph (`nodes` are feet positions on the floor, `links` undirected node pairs). The straight line of every link is walkable for the player hull with every barricade open, the graph is connected, and every path from outside to inside goes through an opening's `outside` → `inside` link.
+
+`maps/maps.test.ts` checks every defense map: only teleport zones with one under everything, no intersecting boxes, a connected nav graph on walkable floor that splits into exactly an outside and an inside part when the opening links are removed, openings facing at least three directions, spawns and pads inside, spawn areas on floor outside.
+
+## defense_blackthorn — Zombie Defense ("Blackthorn Farm")
+
+Theme: a walled stone farmstead on open fields at harvest-moon dusk, with orange haze on the horizon, fireflies over the yard, lanterns, an orchard (NW), a windmill (NE), haystacks (SE), a shed (E) and a farm track running south from the gate. A 256-tall hedgerow at x ±2688, y ±2560 bounds the fields, with a teleport under the map. 189 box brushes.
+
+- **Base:** the farmyard, inner faces x ±768, y ±640, walls 48 thick (outer x ±816, y ±688). The west and east walls are solid to 272. The north and south walls are solid to 168, then have a 40-tall firing slot (168–208) between timber posts, then are solid again to 272, with a tiled roof (272–288) over the wall-walk. The slot is lower than the ducked hull (54), so nobody fits through it.
+- **Wall-walks:** timber decks at z 128 along the inside of the north and south walls (y ±512..640). Each is reached by one flight of 8 steps: the NW flight at x −640..−512 climbs north, the SE flight at x 512..640 climbs south. Players shoot down into the yard and out through the slot. Zombies that get inside can climb up too.
+- **Openings (8),** a door and a window on every side. Doors stand on the floor and are 112 wide, 128 tall. Windows are 96 wide on a 16-high sill (one step), 96 tall. The south gate is 192 wide and 144 tall with 8 planks. Their ids are `north_door`, `north_window`, `east_door`, `east_window`, `south_gate`, `south_window`, `west_window` and `west_door`. Nav nodes sit 64 outside the outer face and 80 inside the inner face. The north and south inside nodes are under the decks (headroom 112).
+- **Turret pads (8):** four on the wall-walks (`pad_walk_nw`/`ne`/`sw`/`se` at x ±256, y ±536, z 128) and four in the yard (`pad_west` and `pad_east` at x ±576, `pad_north` and `pad_south` at y ±256). Every opening is in sight of at least two pads within 900 units.
+- **Yard:** a covered well in the middle, hay bales and crates around it, bales in the SW corner and a hay cart in the NE corner. The 8 player spawns stand round the well, facing out.
+- **Zombie spawn areas (8):** two per side, about 1100 out from the walls (north and south at x ±640 and |y| 1824..2016; west and east at y ±480 and |x| 1888..2080). Each feeds a ring of nav nodes 192 outside the walls, which leads to every opening's outside node.
+
+The nav graph has 66 nodes and 82 links: the outside ring, the opening nodes, an octagon round the well, the two stair flights and the wall-walks. `maps/defense_blackthorn.test.ts` checks the map:
+
+- Every nav link is walked both ways with `playerMove`, staying on the straight line, with all barricades open.
+- A ducked hull swept every 8 units along and up every wall (from the floor to the roof) is stopped everywhere when all openings are boarded, and gets through at the openings when they are open.
+- Each opening box is flush against its jambs, sill and lintel and touches no brush.
+- Nothing outside near the base is high enough to climb over the walls.
+- Spawns and pads stand on the floor inside the base, and pads keep 48 clear of nav links.
+- The spawn areas stand on walkable floor 900–2000 from the base, on every side.
 
 ## hns_lido / hns_lido_m — hide and seek, open ("Lido Bay", Large / Medium)
 

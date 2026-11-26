@@ -20,6 +20,7 @@ import { infected_outpost } from './infected_outpost.ts';
 import { infected_terminal } from './infected_terminal.ts';
 import { infected_foundry } from './infected_foundry.ts';
 import { hns_lido, hns_lido_m } from './hns_lido.ts';
+import { defense_blackthorn } from './defense_blackthorn.ts';
 import { SANDBOX } from './sandbox.ts';
 
 /**
@@ -65,7 +66,8 @@ export const MAPS: MapDef[] = [
 	infected_terminal,
 	infected_foundry,
 	hns_lido,
-	hns_lido_m
+	hns_lido_m,
+	defense_blackthorn
 ].map(liftSpawns);
 liftSpawns(SANDBOX);
 

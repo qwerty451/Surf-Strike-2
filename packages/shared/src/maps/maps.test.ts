@@ -504,3 +504,142 @@ describe.each(ZOMBIES.map((m) => [m.id, m] as const))('zombies map %s', (_id, m)
 		}
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Zombie Defense maps (docs/maps.md#zombie-defense-maps, docs/modes.md#zombie-defense)
+
+const DEFENSE: MapDef[] = ALL.filter((m) => m.kind === 'defense');
+
+describe('defense maps', () => {
+	it('the rotation has at least one defense map', () => {
+		expect(mapsForMode('defense').length).toBeGreaterThanOrEqual(1);
+	});
+});
+
+describe.each(DEFENSE.map((m) => [m.id, m] as const))('defense map %s', (_id, m) => {
+	const world = buildCollisionWorld(m);
+	const d = m.defense!;
+	const { nodes, links } = d?.nav ?? { nodes: [], links: [] };
+	const free = (p: Vec3, what: string) => {
+		expect(world.trace(p, p, HULL_MIN, HULL_MAX).startsolid, `${what} starts solid`).toBe(false);
+		const down = world.trace(p, { ...p, z: p.z - 2 }, HULL_MIN, HULL_MAX);
+		expect(down.fraction, `${what} has no ground`).toBeLessThan(1);
+		expect(down.plane.normal.z, `${what} ground not walkable`).toBeGreaterThanOrEqual(0.7);
+	};
+	/** Connected components of the nav graph, optionally without the opening links. */
+	const components = (withoutOpenings: boolean): number[] => {
+		const isOpening = ([i, j]: [number, number]) => d.openings.some((o) => (i === o.outside && j === o.inside) || (i === o.inside && j === o.outside));
+		const adj = nodes.map(() => [] as number[]);
+		for (const l of links) {
+			if (withoutOpenings && isOpening(l)) continue;
+			adj[l[0]]!.push(l[1]);
+			adj[l[1]]!.push(l[0]);
+		}
+		const comp = nodes.map(() => -1);
+		let c = 0;
+		for (let s = 0; s < nodes.length; s++) {
+			if (comp[s] !== -1) continue;
+			comp[s] = c;
+			const q = [s];
+			while (q.length) for (const n of adj[q.pop()!]!) if (comp[n] === -1) ((comp[n] = c), q.push(n));
+			c++;
+		}
+		return comp;
+	};
+
+	it('is an open map with defense data and only teleport zones', () => {
+		expect(m.layout).toBe('open');
+		expect(d).toBeDefined();
+		for (const z of m.zones) expect(z.type, 'defense maps only use teleport zones').toBe('teleport');
+		const all = boundsOf(m.brushes);
+		const tps = zonesOf(m, 'teleport');
+		expect(tps.some((z) => z.max.z <= all.min.z && z.min.x <= all.min.x && z.min.y <= all.min.y && z.max.x >= all.max.x && z.max.y >= all.max.y)).toBe(true);
+		for (const tp of tps) for (const b of m.brushes) expect(overlaps(tp, brushBounds(b)), 'teleport overlaps a brush').toBe(false);
+	});
+
+	it('every brush material exists; box brushes do not intersect', () => {
+		for (const b of m.brushes) expect(m.theme.materials[b.material], b.material).toBeDefined();
+		const bs = boxes(m);
+		for (let i = 0; i < bs.length; i++)
+			for (let j = i + 1; j < bs.length; j++) expect(overlaps(bs[i]!, bs[j]!), `boxes ${i} and ${j} intersect`).toBe(false);
+	});
+
+	it('nav graph: valid, connected, nodes on walkable floor', () => {
+		expect(nodes.length).toBeGreaterThanOrEqual(2);
+		for (const [a, b] of links) {
+			expect(nodes[a], `link ${a}-${b}`).toBeDefined();
+			expect(nodes[b], `link ${a}-${b}`).toBeDefined();
+		}
+		expect(new Set(components(false)).size, 'nav graph connected').toBe(1);
+		for (const [i, n] of nodes.entries()) free({ ...n, z: n.z + 0.25 }, `nav node ${i}`);
+	});
+
+	it('openings on several sides, linked outside → inside; the openings split the graph into outside and inside', () => {
+		expect(d.openings.length).toBeGreaterThanOrEqual(4);
+		expect(new Set(d.openings.map((o) => o.id)).size).toBe(d.openings.length);
+		const split = components(true);
+		expect(new Set(split).size, 'without the opening links: outside and inside').toBe(2);
+		const outC = split[d.openings[0]!.outside]!;
+		for (const o of d.openings) {
+			expect(nodes[o.outside], `${o.id} outside node`).toBeDefined();
+			expect(nodes[o.inside], `${o.id} inside node`).toBeDefined();
+			expect(split[o.outside], `${o.id} outside node is outside`).toBe(outC);
+			expect(split[o.inside], `${o.id} inside node is inside`).not.toBe(outC);
+			expect(o.max.x > o.min.x && o.max.y > o.min.y && o.max.z > o.min.z, `${o.id} box`).toBe(true);
+		}
+		// Sides: direction of each opening from the centroid of the inside nodes, in 90° sectors.
+		const ins = d.openings.map((o) => nodes[o.inside]!);
+		const cx = ins.reduce((s, p) => s + p.x, 0) / ins.length;
+		const cy = ins.reduce((s, p) => s + p.y, 0) / ins.length;
+		const sector = (o: (typeof d.openings)[number]) => {
+			const a = Math.atan2((o.min.y + o.max.y) / 2 - cy, (o.min.x + o.max.x) / 2 - cx);
+			return ((Math.round(a / (Math.PI / 2)) % 4) + 4) % 4;
+		};
+		expect(new Set(d.openings.map(sector)).size, 'openings face at least 3 directions').toBeGreaterThanOrEqual(3);
+	});
+
+	it('player spawns (>= 4) and turret pads stand inside the base', () => {
+		const split = components(true);
+		const inC = split[d.openings[0]!.inside]!;
+		/** The nav node nearest to p that it reaches in a straight line (same floor). */
+		const nearestInside = (p: Vec3): boolean => {
+			let best = -1;
+			let bd = Infinity;
+			for (const [i, n] of nodes.entries()) {
+				if (Math.abs(n.z - p.z) > 20) continue;
+				const dd = Math.hypot(n.x - p.x, n.y - p.y);
+				if (dd >= bd) continue;
+				const t = world.trace({ ...p, z: n.z + 0.25 }, { ...n, z: n.z + 0.25 }, HULL_MIN, HULL_MAX);
+				if (t.startsolid || t.fraction < 1) continue;
+				best = i;
+				bd = dd;
+			}
+			return best >= 0 && split[best] === inC;
+		};
+		expect(m.spawns?.length ?? 0).toBeGreaterThanOrEqual(4);
+		for (const [i, s] of [m.spawn, ...(m.spawns ?? [])].entries()) {
+			free(s.pos, `spawn ${i}`);
+			expect(nearestInside(s.pos), `spawn ${i} inside the base`).toBe(true);
+		}
+		expect(d.pads.length).toBeGreaterThanOrEqual(4);
+		expect(new Set(d.pads.map((p) => p.id)).size).toBe(d.pads.length);
+		for (const p of d.pads) {
+			free({ ...p.pos, z: p.pos.z + 0.25 }, p.id);
+			expect(nearestInside(p.pos), `${p.id} inside the base`).toBe(true);
+		}
+	});
+
+	it('zombie spawn areas stand on walkable floor outside, each next to an outside nav node', () => {
+		const split = components(true);
+		const outC = split[d.openings[0]!.outside]!;
+		expect(d.spawnZones.length).toBeGreaterThanOrEqual(4);
+		for (const [i, z] of d.spawnZones.entries()) {
+			expect(z.max.x - z.min.x, `area ${i} too narrow`).toBeGreaterThanOrEqual(64);
+			expect(z.max.y - z.min.y, `area ${i} too narrow`).toBeGreaterThanOrEqual(64);
+			for (const [fx, fy] of [[0.5, 0.5], [0.2, 0.2], [0.8, 0.8], [0.2, 0.8], [0.8, 0.2]] as const)
+				free({ x: z.min.x + (z.max.x - z.min.x) * fx, y: z.min.y + (z.max.y - z.min.y) * fy, z: z.min.z + 0.25 }, `area ${i} (${fx}, ${fy})`);
+			expect(nodes[z.node], `area ${i} node`).toBeDefined();
+			expect(split[z.node], `area ${i} node is outside`).toBe(outC);
+		}
+	});
+});
