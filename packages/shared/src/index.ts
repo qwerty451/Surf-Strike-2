@@ -21,5 +21,8 @@ export * from './modes/index.ts';
 export * from './economy.ts';
 export * from './modes/hunt.ts';
 export * from './modes/tournament/net.ts';
+export * from './modes/tournament/bracket.ts';
+export * from './modes/tournament/damage.ts';
+export * from './modes/tournament/game.ts';
 export * from './cosmetics.ts';
 export * from './casino.ts';
