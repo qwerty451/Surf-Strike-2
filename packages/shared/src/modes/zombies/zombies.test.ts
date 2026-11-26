@@ -210,10 +210,11 @@ describe('route and spawner', () => {
 	});
 
 	it('zombie snapshot round-trips', () => {
-		const frame = encodeZombies(1234, [{ id: 7, x: 100.5, y: -2000.5, z: 64, yaw: -90, flags: 5, hp: 0.5 }]);
-		expect(frame.byteLength).toBe(7 + 11);
+		const frame = encodeZombies(1234, [{ id: 7, x: 100.5, y: -2000.5, z: 64, yaw: -90, flags: 5, hp: 0.5 }], 12456.25);
+		expect(frame.byteLength).toBe(15 + 11);
 		const d = decodeZombies(frame)!;
 		expect(d.tick).toBe(1234);
+		expect(d.serverTimeMs).toBe(12456.25);
 		expect(d.zombies[0]!).toMatchObject({ id: 7, x: 100.5, y: -2000.5, z: 64, flags: 5 });
 		expect(d.zombies[0]!.yaw).toBeCloseTo(-90, 0);
 		expect(d.zombies[0]!.hp).toBeCloseTo(0.5, 1);
@@ -356,13 +357,30 @@ describe('round flow (fake clock)', () => {
 		game.setPlayerPos(2, { x: 900, y: 0, z: 0, ducked: false, yaw: 180 });
 		const eye = { x: 600, y: 0, z: VIEW_HEIGHT };
 		const h = headCentre({ x: 900, y: 0, z: 0, yaw: 180 });
+		advance(50);
+		const seenTick = game.tick;
+		// About 40 units of motion at 265 u/s during the 156 ms between seeing and firing.
+		game.setPlayerPos(2, { x: 900, y: 41, z: 0, ducked: false, yaw: 180 });
+		advance(156);
+		const dir = unit(h.x - eye.x, h.y - eye.y, h.z - eye.z);
+		const live = game.fire(1, { weapon: 'pistol', origin: eye, dir, tick: game.tick }, clock.now);
+		expect(live.events.some((e) => e.e === 'hit')).toBe(false);
 		clock.now += 200;
-		const shot = game.fire(1, { weapon: 'pistol', origin: eye, dir: unit(h.x - eye.x, h.y - eye.y, h.z - eye.z), tick: game.tick }, clock.now);
+		const shot = game.fire(1, { weapon: 'pistol', origin: eye, dir, tick: seenTick }, clock.now);
 		expect(shot.events.find((e) => e.e === 'kill')).toMatchObject({ pid: 2, head: true, by: 1 });
 		expect(game.playerView(2)!.alive).toBe(false);
 		events.length = 0;
 		advance(ZM_PZ_RESPAWN_SECS * 1000 + 100);
 		expect(events.some((e) => e.e === 'spawn' && e.id === 2 && e.team === 'zombie')).toBe(true);
+
+		game.setPlayerPos(2, { x: 900, y: 0, z: 0, ducked: false, yaw: 180 });
+		advance(50);
+		const beforeTeleport = game.tick;
+		game.setPlayerPos(2, { x: 900, y: 300, z: 0, ducked: false, yaw: 180 }, true);
+		advance(50);
+		const afterTeleport = game.fire(1, { weapon: 'pistol', origin: eye, dir, tick: beforeTeleport }, clock.now);
+		expect(afterTeleport.ok).toBe(true);
+		expect(afterTeleport.events.some((e) => e.e === 'hit')).toBe(false);
 
 		// The last survivor goes down: lost, even though a player-zombie is alive.
 		game.setPlayerPos(1, { x: 0, y: 0, z: 0, ducked: false });

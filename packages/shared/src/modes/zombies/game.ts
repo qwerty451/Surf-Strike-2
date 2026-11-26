@@ -27,6 +27,7 @@ import type { Cvars } from '../../cvars.ts';
 import type { MapDef, Spawn, Zone, ZombieGate, ZombieSpawnZone } from '../../maps/types.ts';
 import { HULL_MAX, HULL_MIN, IN_JUMP, VIEW_HEIGHT, type PlayerState, type UserCmd } from '../../movement/api.ts';
 import { createPlayer, playerMove } from '../../movement/gamemovement.ts';
+import type { SnapshotEntry } from '../../protocol.ts';
 import type { Vec3 } from '../../types.ts';
 import { hullInBox } from '../tag.ts';
 import { gatedWorld, gateFarSide, unlockReached, ZM_GATE_COUNTDOWN_SECS, type GatedWorld, type GateState } from './gates.ts';
@@ -90,6 +91,8 @@ const STUCK_LIMIT = 3;
 /** Zombies this close to a closed gate wait there instead of counting as stuck. */
 const GATE_WAIT_DIST = 200;
 const HISTORY_TICKS = Math.ceil(ZM_HISTORY_MS / ZM_STEP_MS);
+/** Match the remote player interpolation buffer's snap distance. */
+const PLAYER_SNAP_DISTANCE = 1024;
 
 /**
  * Spawn interval (ms) for `survivors` living survivors at route progress 0..1.
@@ -235,6 +238,8 @@ export interface ZmFire {
 	dir: Vec3;
 	/** Zombie sim tick the shooter saw (lag compensation); clamped to the history. */
 	tick: number;
+	/** Validated time of the player pose on the same clock as outgoing player snapshots. */
+	playerRenderTime?: number;
 }
 
 export interface ZmFireResult {
@@ -278,6 +283,7 @@ interface ZmPlayer {
 	/** Survivor weapon kept while a zombie (restored next round). */
 	loadout: WeaponId;
 	pos: ZmPlayerPos | null;
+	poseHistory: PlayerHistorySample[];
 	/** Route progress of `pos`, refreshed every sim step. */
 	s: number;
 	/** Gates behind this survivor: passed, or skipped by a spawn at a checkpoint. */
@@ -300,7 +306,13 @@ interface Gate {
 	opensAt: number;
 }
 
+interface PlayerHistorySample {
+	at: number;
+	pose: HitboxPose;
+}
+
 interface HistoryFrame {
+	at: number;
 	tick: number;
 	poses: Map<number, HitboxPose>;
 }
@@ -320,6 +332,8 @@ export interface ZombiesGameOptions {
 	spawnIntervalScale?: number;
 	/** Server: looser fire/reload timing (ZM_FIRE_TOLERANCE, ZM_RELOAD_TOLERANCE). */
 	lenient?: boolean;
+	/** Online: capture the poses relayed by the lobby instead of sampling during simulation. */
+	relayedPlayerHistory?: boolean;
 	/** Path units behind the last survivor before zombies despawn (tests: Infinity). */
 	despawnBehind?: number;
 	gateSecs?: number;
@@ -367,6 +381,7 @@ export class ZombiesGame {
 	private readonly maxZombies: number;
 	private readonly spawnScale: number;
 	private readonly lenient: boolean;
+	private readonly relayedPlayerHistory: boolean;
 	private readonly zcvars: Cvars;
 	private readonly startSpawns: Spawn[];
 	private readonly killZ: number;
@@ -399,6 +414,7 @@ export class ZombiesGame {
 		this.maxZombies = opts.maxZombies ?? ZM_MAX_ZOMBIES;
 		this.spawnScale = opts.spawnIntervalScale ?? 1;
 		this.lenient = opts.lenient ?? false;
+		this.relayedPlayerHistory = opts.relayedPlayerHistory ?? false;
 		this.despawnBehind = opts.despawnBehind ?? ZM_DESPAWN_BEHIND;
 		this.simTime = opts.now;
 		this.zcvars = { ...opts.cvars, sv_autobunnyhopping: 0, sv_enablebunnyhopping: 0 };
@@ -431,6 +447,7 @@ export class ZombiesGame {
 				ws: this.weaponState(DEFAULT_WEAPON),
 				loadout: DEFAULT_WEAPON,
 				pos: null,
+				poseHistory: [],
 				s: 0,
 				zone: 0,
 				iframesUntil: 0,
@@ -446,9 +463,10 @@ export class ZombiesGame {
 		}
 	}
 
-	setPlayerPos(id: number, pos: ZmPlayerPos): void {
+	setPlayerPos(id: number, pos: ZmPlayerPos, teleported = false): void {
 		const p = this.players.get(id);
 		if (!p) return;
+		if (teleported) p.poseHistory.length = 0;
 		if (!p.pos) p.pos = { ...pos };
 		else {
 			p.pos.x = pos.x;
@@ -490,6 +508,7 @@ export class ZombiesGame {
 
 	private spawnEvent(p: ZmPlayer, s: Spawn, now: number, reason: SpawnReason): void {
 		p.graceUntil = now + TELEPORT_GRACE_MS;
+		p.poseHistory.length = 0;
 		p.pos = { x: s.pos.x, y: s.pos.y, z: s.pos.z, ducked: false, yaw: s.yaw };
 		this.pending.push({ e: 'spawn', id: p.id, x: s.pos.x, y: s.pos.y, z: s.pos.z, yaw: s.yaw, hp: p.hp, team: p.team, reason });
 	}
@@ -623,12 +642,13 @@ export class ZombiesGame {
 		}
 		if (!p.ws.fire(now)) return reject(p.ws.reloading(now) ? 'reloading' : p.ws.mag <= 0 ? 'empty' : 'too fast');
 		const dir = { x: d.x / len, y: d.y / len, z: d.z / len };
-		if (p.team === 'zombie') return { ok: true, events: this.claw(p, o, dir, now) };
-		return { ok: true, events: this.resolveShot(p, o, dir, Number.isFinite(shot.tick) ? shot.tick : this.tick) };
+		if (p.team === 'zombie') return { ok: true, events: this.claw(p, o, dir, now, shot.playerRenderTime) };
+		const tick = Number.isFinite(shot.tick) ? shot.tick : this.tick;
+		return { ok: true, events: this.resolveShot(p, o, dir, tick, shot.playerRenderTime) };
 	}
 
 	/** Player-zombie melee: the nearest survivor in reach and in the cone takes one hit. */
-	private claw(p: ZmPlayer, o: Vec3, d: Vec3, now: number): ZmEvent[] {
+	private claw(p: ZmPlayer, o: Vec3, d: Vec3, now: number, playerRenderTime?: number): ZmEvent[] {
 		const def = WEAPONS.claws;
 		this.pending.push({ e: 'shot', by: p.id, weapon: 'claws', o: { ...o }, d: { ...d }, len: 0 });
 		if (this.phase !== 'playing') return this.flush();
@@ -636,9 +656,11 @@ export class ZombiesGame {
 		let bestT = Infinity;
 		for (const s of this.survivors()) {
 			if (!s.pos) continue;
-			const h = meleeZombie(o, d, { x: s.pos.x, y: s.pos.y, z: s.pos.z, yaw: s.pos.yaw ?? 0 }, def.range, def.coneDeg);
+			const rewound = playerRenderTime === undefined ? undefined : this.playerPoseAt(s.poseHistory, playerRenderTime);
+			const pose = rewound ?? { ...s.pos, yaw: s.pos.yaw ?? 0 };
+			const h = meleeZombie(o, d, pose, def.range, def.coneDeg);
 			if (!h || h.t >= bestT) continue;
-			const los = this.world.trace(o, { x: s.pos.x, y: s.pos.y, z: s.pos.z + 40 }, ZERO, ZERO);
+			const los = this.world.trace(o, { x: pose.x, y: pose.y, z: pose.z + 40 }, ZERO, ZERO);
 			if (los.fraction < 1) continue;
 			best = s;
 			bestT = h.t;
@@ -653,29 +675,63 @@ export class ZombiesGame {
 		return out;
 	}
 
-	/** Shot targets: AI zombies at the shooter's tick (history), player-zombies as they are now. */
-	private targets(tick: number): Target[] {
-		const t = Math.round(Math.max(this.tick - HISTORY_TICKS, Math.min(this.tick, tick)));
-		const frame = t >= this.tick ? undefined : this.history.find((h) => h.tick === t);
+	/** Shot targets at the shooter's tick, or their current pose if they have no sample for it. */
+	private targets(tick: number, playerRenderTime?: number): Target[] {
+		const t = Math.max(this.tick - HISTORY_TICKS, Math.min(this.tick, tick));
+		const frame = t >= this.tick ? undefined : this.history.find((h) => h.tick === Math.floor(t));
+		const next = frame && t > frame.tick ? this.history.find((h) => h.tick === Math.ceil(t)) : undefined;
 		const out: Target[] = [];
 		for (const z of this.zombies.values()) {
-			const pose = frame?.poses.get(z.id) ?? { x: z.body.origin.x, y: z.body.origin.y, z: z.body.origin.z, yaw: z.yaw };
+			const a = frame?.poses.get(z.id);
+			const b = next?.poses.get(z.id);
+			const current = { x: z.body.origin.x, y: z.body.origin.y, z: z.body.origin.z, yaw: z.yaw };
+			let pose = a ?? b ?? current;
+			if (a && b && frame) {
+				const f = t - frame.tick;
+				const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+				const dyaw = ((((b.yaw - a.yaw + 180) % 360) + 360) % 360) - 180;
+				pose = dx * dx + dy * dy + dz * dz > 512 ** 2
+					? b
+					: { x: a.x + dx * f, y: a.y + dy * f, z: a.z + dz * f, yaw: a.yaw + dyaw * f };
+			}
 			out.push({ kind: 'ai', z, pose });
 		}
 		for (const p of this.players.values()) {
 			if (p.team !== 'zombie' || !p.alive || !p.pos) continue;
-			out.push({ kind: 'pz', p, pose: { x: p.pos.x, y: p.pos.y, z: p.pos.z, yaw: p.pos.yaw ?? 0 } });
+			const at = playerRenderTime ?? frame?.at;
+			const pose = at !== undefined ? this.playerPoseAt(p.poseHistory, at) : undefined;
+			out.push({ kind: 'pz', p, pose: pose ?? { ...p.pos, yaw: p.pos.yaw ?? 0 } });
 		}
 		return out;
 	}
 
-	private resolveShot(p: ZmPlayer, o: Vec3, d: Vec3, tick: number): ZmEvent[] {
+	private playerPoseAt(history: readonly PlayerHistorySample[], at: number): HitboxPose | undefined {
+		const first = history[0];
+		if (!first || at <= first.at) return first?.pose;
+		for (let i = 1; i < history.length; i++) {
+			const b = history[i]!;
+			if (b.at < at) continue;
+			const a = history[i - 1]!;
+			const dx = b.pose.x - a.pose.x;
+			const dy = b.pose.y - a.pose.y;
+			const dz = b.pose.z - a.pose.z;
+			if (dx * dx + dy * dy + dz * dz > PLAYER_SNAP_DISTANCE ** 2) return b.pose;
+			const f = (at - a.at) / (b.at - a.at);
+			let yawDelta = (b.pose.yaw - a.pose.yaw) % 360;
+			if (yawDelta > 180) yawDelta -= 360;
+			else if (yawDelta < -180) yawDelta += 360;
+			return { x: a.pose.x + dx * f, y: a.pose.y + dy * f, z: a.pose.z + dz * f, yaw: a.pose.yaw + yawDelta * f };
+		}
+		return history.at(-1)?.pose;
+	}
+
+	private resolveShot(p: ZmPlayer, o: Vec3, d: Vec3, tick: number, playerRenderTime?: number): ZmEvent[] {
 		const def = WEAPONS[p.ws.weapon];
 		const events: ZmEvent[] = [];
 		const end = { x: o.x + d.x * def.range, y: o.y + d.y * def.range, z: o.z + d.z * def.range };
 		const worldT = this.world.trace(o, end, ZERO, ZERO).fraction * def.range;
 		const hits: Array<{ tg: Target; t: number; head: boolean }> = [];
-		for (const tg of this.targets(tick)) {
+		for (const tg of this.targets(tick, playerRenderTime)) {
 			if (def.magazine === 0) {
 				const h = meleeZombie(o, d, tg.pose, def.range, def.coneDeg);
 				if (!h) continue;
@@ -1165,8 +1221,29 @@ export class ZombiesGame {
 	private recordHistory(): void {
 		const poses = new Map<number, HitboxPose>();
 		for (const z of this.zombies.values()) poses.set(z.id, { x: z.body.origin.x, y: z.body.origin.y, z: z.body.origin.z, yaw: z.yaw });
-		this.history.push({ tick: this.tick, poses });
-		while (this.history.length > HISTORY_TICKS) this.history.shift();
+		this.history.push({ at: this.simTime, tick: this.tick, poses });
+		if (this.history.length > HISTORY_TICKS + 1) this.history.shift();
+		if (this.relayedPlayerHistory) return;
+		for (const p of this.players.values()) {
+			if (p.team === 'zombie' && p.alive && p.pos) this.recordPlayerPose(p, p.pos, this.simTime);
+		}
+	}
+
+	/** Record relayed player poses at the same sample times used by the renderer. */
+	recordPlayerSnapshot(entries: readonly SnapshotEntry[]): void {
+		if (!this.relayedPlayerHistory) return;
+		for (const entry of entries) {
+			const p = this.players.get(entry.id);
+			if (p?.alive && entry.sampleTimeMs !== undefined) this.recordPlayerPose(p, entry, entry.sampleTimeMs);
+		}
+	}
+
+	private recordPlayerPose(p: ZmPlayer, { x, y, z, yaw = 0 }: ZmPlayerPos | SnapshotEntry, at: number): void {
+		const history = p.poseHistory;
+		const sample = { at, pose: { x, y, z, yaw } };
+		if (history.at(-1)?.at === at) history[history.length - 1] = sample;
+		else history.push(sample);
+		while (history.length > 2 && history[1]!.at < at - ZM_HISTORY_MS) history.shift();
 	}
 
 	// ---------------------------------------------------------------------

@@ -16,7 +16,7 @@
  * process never adds a long stretch.
  */
 import type { MapDef, NetState } from '@surf/shared';
-import { ACTIVITY, ABUSE, FLAG_DUCKED, FLAG_ON_GROUND, FLAG_TELEPORTED, TICK_RATE } from '@surf/shared';
+import { ACTIVITY, ABUSE, FLAG_DUCKED, FLAG_ON_GROUND, FLAG_TELEPORTED, teleportSeq, TICK_RATE } from '@surf/shared';
 
 /** How a mode explains that a player is not moving. */
 export type Stillness = 'held' | 'look' | null;
@@ -186,7 +186,7 @@ export class PlayerActivity {
 		if (Math.hypot(s.vx, s.vy) > opts.limit) this.suspectUntil = now + ACTIVITY.suspectMs;
 
 		// Teleports move and turn the player without any input.
-		if (jumped || (s.flags & FLAG_TELEPORTED) !== 0) {
+		if (jumped || (s.flags & FLAG_TELEPORTED) !== 0 || teleportSeq(s.flags) !== teleportSeq(p.flags)) {
 			this.anchor = { x: s.x, y: s.y, z: s.z };
 			this.sector = -1;
 			this.yaw.reset();

@@ -16,7 +16,9 @@ import {
 	formatTenths,
 	formatTicks,
 	getMap,
+	HNS_MAX_REWIND_MS,
 	hullInBox,
+	INF_HISTORY_MS,
 	CLOSE_IP_LIMIT,
 	MAP_IDS,
 	mapCvars,
@@ -24,15 +26,18 @@ import {
 	MAPS,
 	MapRotation,
 	MAX_CHAT,
+	MAX_REWIND_RTT_MS,
 	RTV_REQUEST_DURATION,
 	MAX_TICKS_PER_FRAME,
 	HULL_MIN,
 	DUCK_HULL_MAX,
 	playerMaxs,
 	PROTOCOL_VERSION,
+	CLOSE_PROTOCOL_MISMATCH,
 	passwordError,
 	playerMove,
 	playerRest,
+	renderTimeBudgetMs,
 	usernameError,
 	mapTitle,
 	sanitizeLoadout,
@@ -43,6 +48,8 @@ import {
 	TICK_INTERVAL,
 	TICK_RATE,
 	VIEW_HEIGHT,
+	withTeleportSeq,
+	ZM_HISTORY_MS,
 	type AdminAction,
 	type ClientMessage,
 	type CollisionWorld,
@@ -57,7 +64,7 @@ import {
 	type RotationEvent,
 	type ScoreRow,
 	type ServerMessage,
-	type SnapshotEntry,
+	type SnapshotFrame,
 	type UserCmd,
 	type Vec3,
 	type VoteOption
@@ -67,10 +74,13 @@ import { GameFullscreen } from '../input/fullscreen.js';
 import { isBrowserShortcut } from '../input/guard.js';
 import { Input } from '../input/input.js';
 import { isMoveAction, SubtickSampler } from '../input/subtick.js';
+import { AdaptiveDelay } from '../net/adaptive.js';
 import type { NetClient } from '../net/client.js';
+import { ServerClock } from '../net/clock.js';
 import { Connection } from '../net/connection.js';
-import { serverOverride } from '../net/discovery.js';
-import { emptySample, INTERP_DELAY_MS, SnapshotBuffer, type Sample } from '../net/interp.js';
+import { sameOriginWsUrl, serverOverride } from '../net/discovery.js';
+import { emptySample, SnapshotBuffer, type Sample } from '../net/interp.js';
+import { NetStats } from '../net/stats.js';
 import { emptyPose } from '../render/players.js';
 import { GameRenderer } from '../render/renderer.js';
 import { Binds } from './binds.js';
@@ -116,6 +126,7 @@ const SOLO_VOTER = 'local';
 /** Scoreboard row id of the local player offline. */
 const SOLO_ROW_ID = 0;
 const FULL_HOLDOFF_MS = 60_000;
+const VERSION_HOLDOFF_MS = 60_000;
 /** Reconnect this long after a temporary ban lifted (clock and timer slack). */
 const BAN_RECONNECT_MS = 1_000;
 /** The shop stops waiting for a reply after this long. */
@@ -192,7 +203,8 @@ export class Game implements CommandContext {
 	// Identity
 	private playerId: string;
 	/** Stored session (token + username); the server confirms it on welcome. */
-	private session: StoredSession | null;
+	private session: StoredSession | null = null;
+	private sessionScope: string | null = null;
 	/** Token sent in the current connection's hello (to detect a rejected session). */
 	private helloToken: string | null = null;
 
@@ -222,6 +234,8 @@ export class Game implements CommandContext {
 	/** The newest tick moved the player (false: frozen or down, no movement sounds). */
 	private moves = true;
 	private teleported = true;
+	private tpSeq = 0;
+	private spawnSeq = 0;
 	private snapPending = false;
 	private mouse = { dx: 0, dy: 0 };
 
@@ -272,6 +286,13 @@ export class Game implements CommandContext {
 	private fpsSince = 0;
 	private trendAt = 0;
 	private trendSpeed = 0;
+	private serverClock = new ServerClock();
+	private adaptiveDelay = new AdaptiveDelay();
+	private lastRenderServerMs = 0;
+	private lastCombatPoseMs = 0;
+	private lastClientPing = 0;
+	private netStats = new NetStats();
+	private lastNetGraph = 0;
 
 	constructor(private canvas: HTMLCanvasElement) {
 		this.cvars = new ClientCvars(this.store);
@@ -279,10 +300,7 @@ export class Game implements CommandContext {
 		this.playerId = loadPlayerId(this.store);
 		const storedName = loadName(this.store);
 		if (storedName) this.cvars.set('name', storedName);
-		this.session = loadSession(this.store);
-		this.hud.account = this.session ? { username: this.session.username } : null;
-		// First visit (no session, never chose guest): account panel instead of the old name prompt.
-		this.hud.authPanelOpen = !this.session && !isGuest(this.store);
+		this.hud.authPanelOpen = !isGuest(this.store);
 		this.hud.cvars = this.cvars.snapshot();
 		this.hud.maps = MAPS.map((m) => ({ id: m.id, title: m.title, kind: m.kind, difficulty: m.difficulty, ...(m.size && { size: m.size }) }));
 
@@ -332,15 +350,20 @@ export class Game implements CommandContext {
 				idle: () => {
 					this.hud.connecting = false;
 				},
-				open: (c) => this.onOpen(c),
+				open: (c, scope) => this.onOpen(c, scope),
 				message: (m) => this.onMessage(m),
 				snapshot: (e, t) => this.onSnapshot(e, t),
 				ghost: (f) => this.client.ghostFrame?.(f),
 				zombies: (f, t) => this.client.zombies?.(f, t),
+				traffic: (dir, bytes, at) => this.netStats.recordTraffic(dir, bytes, at),
 				closed: (wasOpen, _url, code) => this.onClosed(wasOpen, code)
 			},
 			{
 				override: typeof location !== 'undefined' ? serverOverride(location.search) : null,
+				sameOrigin:
+					typeof __SURF_SELF_HOSTED__ !== 'undefined' && __SURF_SELF_HOSTED__ && typeof location !== 'undefined'
+						? sameOriginWsUrl(location)
+						: null,
 				dev: import.meta.env.DEV,
 				fetch: (...a) => fetch(...a)
 			}
@@ -527,6 +550,8 @@ export class Game implements CommandContext {
 			r.buf.clear();
 			r.hasSample = false;
 		}
+		this.lastCombatPoseMs = 0;
+		this.netStats.resetPlayers();
 		if (this.mode === 'solo') {
 			this.records = null;
 			this.soloPb = loadSoloPb(this.store, def.id);
@@ -827,7 +852,7 @@ export class Game implements CommandContext {
 	}
 
 	private logout(): void {
-		clearSession(this.store);
+		if (this.sessionScope !== null) clearSession(this.store, this.sessionScope);
 		this.session = null;
 		this.helloToken = null;
 		if (!this.hud.account) return;
@@ -891,9 +916,9 @@ export class Game implements CommandContext {
 		h.account = { username: m.username, admin: m.admin === true };
 		h.authError = null;
 		if (!h.account.admin) h.adminState = null;
-		if (m.token) {
+		if (m.token && this.sessionScope !== null) {
 			this.session = { token: m.token, username: m.username };
-			saveSession(this.store, this.session);
+			saveSession(this.store, this.sessionScope, this.session);
 		}
 		if (h.authPanelOpen) {
 			h.authPanelOpen = false;
@@ -988,16 +1013,16 @@ export class Game implements CommandContext {
 		if (account === undefined) return; // old server without accounts
 		if (account) {
 			h.account = { username: account.username, admin: account.admin === true };
-			if (this.session && this.session.username !== account.username) {
+			if (this.sessionScope !== null && this.session && this.session.username !== account.username) {
 				this.session = { ...this.session, username: account.username };
-				saveSession(this.store, this.session);
+				saveSession(this.store, this.sessionScope, this.session);
 			}
 			return;
 		}
 		h.account = null;
 		if (this.helloToken) {
 			// Stored session unknown or expired: forget it; ask again unless playing as guest.
-			clearSession(this.store);
+			if (this.sessionScope !== null) clearSession(this.store, this.sessionScope);
 			this.session = null;
 			if (!isGuest(this.store)) {
 				this.releaseAll();
@@ -1087,6 +1112,8 @@ export class Game implements CommandContext {
 			get renderer() { return game.renderer; },
 			get online() { return game.mode === 'online'; },
 			get selfId() { return game.selfId; },
+			get interpDelayMs() { return game.adaptiveDelay.currentMs; },
+			get renderServerTimeMs() { return game.lastRenderServerMs; },
 			get viewId() { return game.viewId(); },
 			get voteOpen() { return !!game.hud.vote && !game.hud.vote.result; },
 			get ghostStore() { return game.ghostStore; },
@@ -1094,7 +1121,13 @@ export class Game implements CommandContext {
 			cvar: (name) => this.cvars.num(name),
 			myName: () => this.myName(),
 			name: (id) => this.remoteName(id),
-			send: (msg) => this.send(msg),
+			send: (msg) => {
+				if (msg.type === 'fire' || msg.type === 'knife' || msg.type === 'throwKnife') {
+					const renderServerTimeMs = game.combatRenderClaim(performance.now());
+					if (renderServerTimeMs !== undefined) return game.send({ ...msg, renderServerTimeMs });
+				}
+				game.send(msg);
+			},
 			notice: (text) => this.notice(text),
 			print: (text, kind) => this.print(text, kind),
 			setAngles: (pitch, yaw) => {
@@ -1252,15 +1285,17 @@ export class Game implements CommandContext {
 			}
 		}
 		// State goes out every tick: 64 Hz (docs/architecture.md).
-		if (this.mode === 'online') this.sendState();
+		if (this.mode === 'online') this.sendState(now);
 		this.tick++;
 	}
 
-	private sendState(): void {
+	private sendState(now = performance.now()): void {
 		if (!this.net) return;
 		const p = this.player;
 		const s = this.netState;
 		s.tick = this.tick;
+		s.spawnSeq = this.spawnSeq;
+		s.renderServerTimeMs = this.combatRenderClaim(now);
 		s.x = p.origin.x;
 		s.y = p.origin.y;
 		s.z = p.origin.z;
@@ -1269,7 +1304,11 @@ export class Game implements CommandContext {
 		s.vz = p.velocity.z;
 		s.pitch = this.pitch;
 		s.yaw = this.yaw;
-		s.flags = (p.ducked ? FLAG_DUCKED : 0) | (p.onGround ? FLAG_ON_GROUND : 0) | (this.teleported ? FLAG_TELEPORTED : 0);
+		if (this.teleported) this.tpSeq = (this.tpSeq + 1) & 0xff;
+		s.flags = withTeleportSeq(
+			(p.ducked ? FLAG_DUCKED : 0) | (p.onGround ? FLAG_ON_GROUND : 0) | (this.teleported ? FLAG_TELEPORTED : 0),
+			this.tpSeq
+		);
 		this.client.netState(s);
 		if (this.spec) s.status = Status.Spectating;
 		this.net.sendBinary(encodeState(s));
@@ -1331,13 +1370,17 @@ export class Game implements CommandContext {
 		let end = now - this.step.accMs - (n - 1) * stepMs;
 		for (let i = 0; i < n; i++, end += stepMs) this.simTick(now, end - stepMs, end);
 
+		if (this.mode === 'online' && now - this.lastClientPing >= 1000) {
+			this.lastClientPing = now;
+			this.net?.send({ type: 'ping', t: now });
+		}
 		if (this.mode === 'solo' && this.rotation && now - this.lastRotationUpdate >= 100) {
 			this.lastRotationUpdate = now;
 			for (const ev of this.rotation.update(now, 1)) this.onRotationEvent(ev, now);
 		}
 
 		const view = this.updateCamera(now);
-		this.updateRemotes(now);
+		this.updateRemotes(now, dt);
 		this.client.frame(now);
 		this.updateHud(now, view);
 		this.audio.update(Math.min(dt, 100) / 1000, {
@@ -1385,13 +1428,52 @@ export class Game implements CommandContext {
 		return n.z > 0.1 && n.z < 0.7 ? n : null;
 	}
 
-	private updateRemotes(now: number): void {
+	private get combatHistoryMs(): number | undefined {
+		switch (this.gameMode.id) {
+			case 'infected': return INF_HISTORY_MS;
+			case 'hns': return HNS_MAX_REWIND_MS;
+			case 'zombies': return ZM_HISTORY_MS;
+		}
+	}
+
+	private combatRenderClaim(now: number): number | undefined {
+		const historyMs = this.combatHistoryMs;
+		if (historyMs === undefined || !this.serverClock.isSynced || this.lastCombatPoseMs <= 0) return undefined;
+		const ping = this.hud.scoreboard.find((row) => row.id === this.selfId)?.ping;
+		const recentRtt = this.serverClock.minRtt;
+		const pathRtt = Math.max(0, recentRtt >= 0 ? recentRtt : (ping ?? 0));
+		// Scoreboard ping is the server's transport estimate rounded to the nearest ms.
+		const rewindRtt = Math.min(MAX_REWIND_RTT_MS, ping === undefined ? pathRtt : Math.max(0, ping - 0.5));
+		const maxAge = Math.min(historyMs, renderTimeBudgetMs(rewindRtt));
+		// The clock envelope includes downlink transit, so add the full RTT for receipt.
+		const receiveAt = this.serverClock.serverTime(now) + pathRtt;
+		return Math.max(this.lastCombatPoseMs, receiveAt - maxAge);
+	}
+
+	private updateRemotes(now: number, dtMs: number): void {
+		const delayMs = this.adaptiveDelay.update(now, dtMs);
+		const renderAt = this.serverClock.renderTime(now, delayMs);
+		const combat = this.combatHistoryMs !== undefined;
+		this.lastRenderServerMs = renderAt;
+		this.lastCombatPoseMs = renderAt;
+		this.netStats.setInterpDelay(delayMs);
 		if (this.remotes.size === 0) return;
-		const renderAt = now - INTERP_DELAY_MS;
 		const players = this.renderer?.players;
 		const specTarget = this.spec && !this.spec.freeFly ? this.spec.targetId : null;
+		let anyUnderrun = false;
+		let anyExtrap = false;
 		for (const rm of this.remotes.values()) {
-			rm.hasSample = rm.buf.sample(renderAt, rm.sample);
+			rm.hasSample = rm.buf.sample(renderAt, rm.sample, this.world, now, !combat);
+			const down = this.client.isDown?.(rm.id) ?? false;
+			if (rm.hasSample && !rm.spectating && !rm.buf.sourceIdle && now - rm.buf.lastArrival < 3000) {
+				if (rm.buf.lastUnderrun) {
+					anyUnderrun = true;
+					// Protocol v3 carries one rewind time. Keep held poses eligible for it
+					// without feeding their caps back into playback for other targets.
+					if (combat && !down) this.lastCombatPoseMs = Math.min(this.lastCombatPoseMs, rm.buf.lastRenderMs);
+				}
+				if (rm.buf.lastExtrapMs > 0) anyExtrap = true;
+			}
 			if (!players) continue;
 			if (!players.has(rm.id)) players.upsert(rm.id, rm.name);
 			const s = rm.sample;
@@ -1401,7 +1483,7 @@ export class Game implements CommandContext {
 				s.status !== Status.Spectating &&
 				rm.id !== specTarget &&
 				now - rm.buf.lastArrival < 3000 &&
-				!(this.client.isDown?.(rm.id) ?? false);
+				!down;
 			const pose = this.avatarPose;
 			pose.x = s.x;
 			pose.y = s.y;
@@ -1418,6 +1500,7 @@ export class Game implements CommandContext {
 			players.setPose(rm.id, pose, visible);
 			this.client.dress?.(players, rm, visible, now);
 		}
+		this.netStats.recordFrame(now, dtMs, anyUnderrun, anyExtrap);
 	}
 
 	private updateHud(now: number, target: Sample | null): void {
@@ -1505,6 +1588,14 @@ export class Game implements CommandContext {
 			if (!cur || cur.targetName !== name || cur.freeFly !== this.spec.freeFly)
 				h.spectating = { targetName: name, freeFly: this.spec.freeFly };
 		} else if (h.spectating) h.spectating = null;
+
+		const netGraphLevel = this.cvars.num('net_graph');
+		if (netGraphLevel <= 0) {
+			if (h.netGraph !== null) h.netGraph = null;
+		} else if (h.netGraph === null || now - this.lastNetGraph >= 200) {
+			this.lastNetGraph = now;
+			h.netGraph = this.netStats.view(now, netGraphLevel >= 2);
+		}
 	}
 
 	private refreshSoloBoard(now: number): void {
@@ -1776,7 +1867,13 @@ export class Game implements CommandContext {
 		];
 	}
 
-	private onOpen(client: NetClient): void {
+	private onOpen(client: NetClient, scope: string | null): void {
+		if (scope === null || scope !== this.sessionScope) {
+			this.sessionScope = scope;
+			this.session = scope === null ? null : loadSession(this.store, scope);
+			this.hud.account = this.session ? { username: this.session.username } : null;
+			this.hud.authPanelOpen = !this.session && !isGuest(this.store);
+		}
 		this.helloToken = this.session?.token ?? null;
 		client.send({
 			type: 'hello',
@@ -1923,10 +2020,14 @@ export class Game implements CommandContext {
 			case 'timeLeft':
 				this.mapEndsAt = now + m.mapTimeLeft * 1000;
 				break;
-			case 'scoreboard':
+			case 'scoreboard': {
 				this.hud.scoreboard = m.rows;
 				this.hud.richest = Array.isArray(m.richest) ? m.richest : [];
+				const me = m.rows.find((r) => r.id === this.selfId);
+				if (me && this.netStats.rtt < 0) this.netStats.recordRtt(me.ping);
+				else if (me && me.ping > 0) this.netStats.recordRtt(me.ping);
 				break;
+			}
 			case 'modeState':
 				if (m.mode === this.gameMode.id) this.hud.modeState = m;
 				this.client.message?.(m, now);
@@ -1934,12 +2035,29 @@ export class Game implements CommandContext {
 			case 'zm':
 			case 'inf':
 			case 'hns':
+				if (m.ev.e === 'spawn' && m.ev.id === this.selfId && m.spawnSeq !== undefined) {
+					const step = (m.spawnSeq - this.spawnSeq) & 0xffff;
+					if (step >= 0x8000 || m.spawnSeq === 0) break;
+					if (step !== 0) {
+						this.client.message?.(m, now);
+						this.spawnSeq = m.spawnSeq;
+					}
+					this.send({ type: 'spawnAck', seq: this.spawnSeq });
+					break;
+				}
+				this.client.message?.(m, now);
+				break;
 			case 'tagged':
 				this.client.message?.(m, now);
 				break;
 			case 'ping':
 				this.net?.send({ type: 'pong', t: m.t });
 				break;
+			case 'pong': {
+				const rtt = this.serverClock.observePong(m.t, now, m.serverTime);
+				if (rtt >= 0) this.netStats.recordRtt(rtt);
+				break;
+			}
 			case 'auth':
 				this.onAuth(m);
 				if (m.ok && m.username === null) this.hud.coins = null;
@@ -2013,6 +2131,7 @@ export class Game implements CommandContext {
 	private onWelcome(m: Extract<ServerMessage, { type: 'welcome' }>, now: number): void {
 		const client = this.conn.client;
 		if (!client) return;
+		if (m.version !== PROTOCOL_VERSION) return client.close(CLOSE_PROTOCOL_MISMATCH);
 		this.net = client;
 		this.mode = 'online';
 		// The loot box pictures get ready now, not in the middle of a run.
@@ -2026,6 +2145,17 @@ export class Game implements CommandContext {
 		this.hud.rtvCooldown = null;
 		this.renderer?.players.clear();
 		this.remotes.clear();
+		this.spawnSeq = 0;
+		this.serverClock.reset();
+		this.adaptiveDelay.reset(m.snapshotHz);
+		this.lastRenderServerMs = 0;
+		if (m.snapshotHz && m.snapshotHz > 0) this.serverClock.setNominalSnapHz(m.snapshotHz);
+		if (m.serverTime !== undefined) this.serverClock.seed(now, m.serverTime);
+		this.lastClientPing = now;
+		client.send({ type: 'ping', t: now });
+		this.netStats.reset();
+		if (m.snapshotHz && m.snapshotHz > 0) this.netStats.setNominalSnapHz(m.snapshotHz);
+		this.netStats.setInterpDelay(this.adaptiveDelay.currentMs);
 		this.hud.ban = null;
 		this.hud.coins = null;
 		this.hud.multiplier = null;
@@ -2047,11 +2177,20 @@ export class Game implements CommandContext {
 		this.print(`Connected to ${client.url}`);
 	}
 
-	private onSnapshot(entries: SnapshotEntry[], arrival: number): void {
+	private onSnapshot(frame: SnapshotFrame, arrival: number): void {
 		if (this.mode !== 'online') return;
-		for (const e of entries) {
+		const obs = this.serverClock.observeSnapshot(arrival, frame.serverTimeMs, frame.seq);
+		this.netStats.recordSnapshot(arrival, {
+			serverTimeMs: frame.serverTimeMs,
+			seq: frame.seq,
+			selfId: this.selfId,
+			entries: obs.accepted ? frame.entries : undefined
+		});
+		if (!obs.accepted) return;
+		this.adaptiveDelay.observeSnapshot(arrival, obs);
+		for (const e of frame.entries) {
 			if (e.id === this.selfId) continue;
-			this.remote(e.id).buf.push(e, arrival);
+			this.remote(e.id).buf.push(e, frame.serverTimeMs, arrival);
 		}
 	}
 
@@ -2091,10 +2230,14 @@ export class Game implements CommandContext {
 			this.conn.disconnect();
 			this.notice('You connected from another tab or device. Playing solo here; reload the page to reconnect.');
 		}
+		if (code === CLOSE_PROTOCOL_MISMATCH) {
+			this.conn.holdOff(VERSION_HOLDOFF_MS);
+			this.notice('The server runs a different version. Reload the page or wait to reconnect.');
+		}
 		if (code === CLOSE_IP_LIMIT) {
 			// Retrying would fail until someone on this network leaves.
 			this.conn.disconnect();
-			this.notice('Too many players are connected from your network (3 at most). Playing solo; reload the page to try again.');
+			this.notice('Too many players are connected from your network. Playing solo; reload the page to try again.');
 		}
 		if (this.mode !== 'online') {
 			if (wasOpen) this.net = null;
@@ -2112,6 +2255,12 @@ export class Game implements CommandContext {
 		this.hud.richest = [];
 		this.hud.modeState = null;
 		this.remotes.clear();
+		this.spawnSeq = 0;
+		this.serverClock.reset();
+		this.adaptiveDelay.reset();
+		this.lastRenderServerMs = 0;
+		this.lastCombatPoseMs = 0;
+		this.netStats.reset();
 		this.renderer?.players.clear();
 		this.records = null;
 		this.hud.adminState = null;
@@ -2126,7 +2275,7 @@ export class Game implements CommandContext {
 		else this.startMode();
 		this.startSoloRotation();
 		this.updatePlayerCount();
-		if (code !== 4002 && code !== 4009 && code !== CLOSE_IP_LIMIT) this.notice('Disconnected from server. Playing solo; reconnecting automatically.');
+		if (code !== 4002 && code !== 4009 && code !== CLOSE_IP_LIMIT && code !== CLOSE_PROTOCOL_MISMATCH) this.notice('Disconnected from server. Playing solo; reconnecting automatically.');
 	}
 
 	// -----------------------------------------------------------------------

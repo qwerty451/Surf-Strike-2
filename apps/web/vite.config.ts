@@ -1,8 +1,14 @@
 import { defineConfig } from 'vitest/config';
-import adapter from '@sveltejs/adapter-vercel';
+import adapterNode from '@sveltejs/adapter-node';
+import adapterVercel from '@sveltejs/adapter-vercel';
 import { sveltekit } from '@sveltejs/kit/vite';
 
+const selfHosted = process.env.SURF_ADAPTER === 'node';
+
 export default defineConfig({
+	define: {
+		__SURF_SELF_HOSTED__: JSON.stringify(selfHosted)
+	},
 	plugins: [
 		sveltekit({
 			compilerOptions: {
@@ -10,7 +16,7 @@ export default defineConfig({
 				runes: ({ filename }) =>
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
-			adapter: adapter()
+			adapter: selfHosted ? adapterNode({ out: 'build' }) : adapterVercel()
 		})
 	],
 	test: {

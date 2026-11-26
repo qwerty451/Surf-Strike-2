@@ -11,13 +11,16 @@ import {
 	decayed,
 	FLAG_DUCKED,
 	FLAG_ON_GROUND,
+	FLAG_TELEPORTED,
 	INF_PERK_KILLS,
 	INF_ROUND_SECS,
 	INF_SECONDARY,
+	INF_STEP_MS,
 	INF_UAV_INTERVAL_MS,
 	InfectedGame,
 	INFECTED_PAY,
 	infEventRoute,
+	INF_HISTORY_MS,
 	infRewindMs,
 	Status,
 	WEAPONS,
@@ -26,7 +29,7 @@ import {
 import type { Command } from '../commands.ts';
 import { clampFireTick, parseInfInput } from './infected-input.ts';
 import type { ModeClientMessage, ModeHost, ModePlayer, ServerMode } from './types.ts';
-import { EMPTY_RECORDS } from './types.ts';
+import { EMPTY_RECORDS, renderRewindMs } from './types.ts';
 
 /** Mode state is re-sent at least this often (ms), and at most this often on minor changes. */
 export const INF_STATE_MS = 1000;
@@ -144,18 +147,22 @@ export class InfectedMode implements ServerMode {
 
 	state(p: ModePlayer, s: NetState): void {
 		// The view and the motion too: the hit body leans, runs, jumps and aims as the drawn one does.
-		this.game.setPlayerPos(p.id, {
-			x: s.x,
-			y: s.y,
-			z: s.z,
-			ducked: (s.flags & FLAG_DUCKED) !== 0,
-			yaw: s.yaw,
-			pitch: s.pitch,
-			vx: s.vx,
-			vy: s.vy,
-			vz: s.vz,
-			onGround: (s.flags & FLAG_ON_GROUND) !== 0
-		});
+		this.game.setPlayerPos(
+			p.id,
+			{
+				x: s.x,
+				y: s.y,
+				z: s.z,
+				ducked: (s.flags & FLAG_DUCKED) !== 0,
+				yaw: s.yaw,
+				pitch: s.pitch,
+				vx: s.vx,
+				vy: s.vy,
+				vz: s.vz,
+				onGround: (s.flags & FLAG_ON_GROUND) !== 0
+			},
+			(s.flags & FLAG_TELEPORTED) !== 0
+		);
 	}
 
 	zone(): void {}
@@ -173,15 +180,10 @@ export class InfectedMode implements ServerMode {
 		switch (input.type) {
 			case 'fire': {
 				const { weapon, origin, dir } = input;
-				// Live clients name no tick (infected has no binary sim-tick frame): the shot or swing is
-				// tested against the poses on the shooter's screen, ping + interpolation delay + allowance
-				// back (infRewindMs, clamped to the history). A named tick (tools, tests) cannot reach
-				// further back than that either: it is clamped to the same window.
-				const rewindMs = infRewindMs(p.ping);
-				const res =
-					input.tick === null
-						? this.game.fire(p.id, { weapon, origin, dir, tick: this.game.tick, rewindMs }, now)
-						: this.game.fire(p.id, { weapon, origin, dir, tick: clampFireTick(input.tick, this.game.tick, rewindMs) }, now);
+				const fallback = infRewindMs(p.ping);
+				const legacy = input.tick === null ? fallback : (this.game.tick - clampFireTick(input.tick, this.game.tick, fallback)) * INF_STEP_MS;
+				const rewindMs = renderRewindMs(input.renderServerTimeMs, this.host.serverNow?.() ?? now, p, INF_HISTORY_MS, legacy);
+				const res = this.game.fire(p.id, { weapon, origin, dir, tick: this.game.tick, rewindMs }, now);
 				// Holding an angle and shooting is playing (docs/economy.md): a real shot of a gun, not a swing.
 				if (res.ok && this.game.phase === 'playing' && WEAPONS[weapon].magazine > 0) this.host.economy.acted(p.id);
 				this.dispatch(res.events);
@@ -196,8 +198,9 @@ export class InfectedMode implements ServerMode {
 				this.dirty = true;
 				break;
 			case 'throwKnife': {
-				// No rewind: the knife is a projectile the server simulates from here on.
-				const res = this.game.throwKnife(p.id, input.origin, input.dir, now);
+				// Rewind the immediate spawn segment. Subsequent flight uses current poses.
+				const rewind = renderRewindMs(input.renderServerTimeMs, this.host.serverNow?.() ?? now, p, INF_HISTORY_MS, 0);
+				const res = this.game.throwKnife(p.id, input.origin, input.dir, now, rewind);
 				this.dispatch(res.events);
 				break;
 			}
@@ -303,7 +306,7 @@ export class InfectedMode implements ServerMode {
 			if (route.to !== undefined) {
 				for (const p of h.players()) if (p.id === route.to) h.send(p, msg);
 			} else if (route.except !== undefined) {
-				for (const p of h.players()) if (p.id !== route.except) h.send(p, msg);
+				h.broadcast(msg, route.except);
 			} else h.broadcast(msg);
 			if (URGENT.has(ev.e)) this.urgent = true;
 			// A shot and a reload change nothing the mode state shows.

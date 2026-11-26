@@ -18,6 +18,7 @@ describe('/api/server', () => {
 	beforeEach(() => {
 		vi.useFakeTimers({ now: 1_800_000_000_000, toFake: ['Date'] });
 		vi.stubEnv('HOST_SECRET', 'test-secret');
+		vi.stubEnv('FIXED_SERVER_URL', undefined);
 		vi.spyOn(console, 'warn').mockImplementation(() => {});
 	});
 	afterEach(() => {
@@ -48,6 +49,35 @@ describe('/api/server', () => {
 		expect((await post({ url: URL_ }, 'wrong')).status).toBe(401);
 		expect((await post({ url: 'http://example.com' })).status).toBe(400);
 		expect((await post({})).status).toBe(400);
+		expect(await get()).toEqual({ url: null });
+	});
+
+	it('keeps the configured URL authoritative over publishes, clears and stale cache entries', async () => {
+		expect((await post({ url: URL_ })).status).toBe(200);
+		expect((await get()).url).toBe(URL_);
+
+		const fixed = 'https://surf.example.com';
+		vi.stubEnv('FIXED_SERVER_URL', fixed);
+		expect((await post({ url: 'https://late-tunnel.trycloudflare.com' })).status).toBe(409);
+		const clear = await post({ url: null, expectedUrl: URL_ });
+		expect(await clear.json()).toEqual({ ok: true, cleared: false, url: fixed });
+		expect(await get()).toEqual({ url: fixed });
+
+		vi.stubEnv('FIXED_SERVER_URL', undefined);
+		expect((await get()).url).toBe(URL_);
+	});
+
+	it('conditional clear with expectedUrl refuses to wipe a different server URL', async () => {
+		const fixed = 'https://surf.example.com';
+		expect((await post({ url: fixed })).status).toBe(200);
+		const mismatch = await post({ url: null, expectedUrl: URL_ });
+		expect(mismatch.status).toBe(200);
+		expect(await mismatch.json()).toEqual({ ok: true, cleared: false, url: fixed });
+		expect((await get()).url).toBe(fixed);
+
+		const match = await post({ url: null, expectedUrl: fixed });
+		expect(match.status).toBe(200);
+		expect((await match.json()).cleared).toBe(true);
 		expect(await get()).toEqual({ url: null });
 	});
 });

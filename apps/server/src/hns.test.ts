@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import type { HnsEvent, MapDef, ServerMessage } from '@surf/shared';
 import { HNS_FOUND_FREEZE_SECS, HNS_START_SECS, Status } from '@surf/shared';
+import type { HnsMode } from './modes/hns.ts';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
 import { netState, sleep, TestClient, testMap } from './test-helpers.ts';
@@ -146,6 +147,17 @@ describe('hide and seek mode', () => {
 		assert.equal(rows.find((r) => r.id === hiderId)!.status, Status.Hider);
 	});
 
+	it('keeps the spawn pose while an in-flight unflagged hider state arrives', async () => {
+		const spawn = events(hider).find((e) => e.e === 'spawn')!;
+		assert.equal(spawn.e, 'spawn');
+		const game = (server.lobby.gameMode as HnsMode).game;
+		hider.sendState(netState(999, 7000));
+		await settle();
+		assert.equal(game.pos(hiderId)?.x, spawn.pos.x);
+		await moveTo(hider, spawn.pos.x, spawn.pos.y, spawn.pos.z);
+		assert.equal(game.pos(hiderId)?.x, spawn.pos.x);
+	});
+
 	it('a frozen seeker is pulled back and cannot knife', async () => {
 		await moveTo(seeker, -800);
 		await moveTo(hider, 1600);
@@ -158,6 +170,7 @@ describe('hide and seek mode', () => {
 		clock += 600;
 		await tick(seeker);
 		assert.deepEqual(events(seeker, n).find((e) => e.e === 'spawn'), { e: 'spawn', id: seekerId, role: 'seeker', pos: { x: -800, y: 0, z: 0 }, yaw: 0, freezeSecs: HIDE - 0.7 });
+		await moveTo(seeker, -800); // acknowledge the freeze correction before moving again
 		n = hider.messages.length;
 		await knife(seeker, 1600);
 		await tick(hider);
@@ -184,6 +197,7 @@ describe('hide and seek mode', () => {
 		assert.equal(events(hider, n).filter((e) => e.e === 'found').length, 0);
 		clock += 1500;
 
+		await moveTo(seeker, -800); // acknowledge the freeze correction before moving again
 		n = hider.messages.length;
 		await knife(seeker, 1600);
 		const found = events(hider, n).find((e) => e.e === 'found');

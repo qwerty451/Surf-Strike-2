@@ -109,8 +109,8 @@ export class ZombiesMode implements ClientMode {
 	// Frame
 
 	frame(now: number): void {
-		const { hud, player, spec } = this.host;
-		const v = this.client.frame(now, !spec, Math.hypot(player.velocity.x, player.velocity.y));
+		const { hud, player, spec, renderServerTimeMs } = this.host;
+		const v = this.client.frame(now, !spec, Math.hypot(player.velocity.x, player.velocity.y), renderServerTimeMs || undefined);
 		if (hud.zombies !== v) hud.zombies = v;
 	}
 

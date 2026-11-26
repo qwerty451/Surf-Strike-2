@@ -33,6 +33,7 @@ export const CLIENT_CVARS: readonly CvarDef[] = [
 	{ name: 'cl_showfps', default: 0, bool: true, help: 'Show FPS counter' },
 	{ name: 'cl_showpos', default: 0, bool: true, help: 'Show position, angles and velocity' },
 	{ name: 'cl_showkeys', default: 0, bool: true, help: 'Show pressed keys' },
+	{ name: 'net_graph', default: 0, min: 0, max: 2, int: true, help: 'Show network telemetry overlay (0 off, 1 bar, 2 bar + graph)' },
 	{ name: 'cl_hideplayers', default: 0, bool: true, help: 'Hide other players' },
 	{ name: 'cl_ghost', default: 1, bool: true, help: 'Show the record ghost on surf and bhop maps' },
 	{ name: 'cl_scorepanel', default: 1, bool: true, help: 'Show the score panel on the right (map records or the current standing)' },

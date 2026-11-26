@@ -11,7 +11,7 @@
  * Both run in one region (the runtime cache is regional). Outside Vercel the cache
  * is in memory.
  *
- * Env (server only): HOST_SECRET.
+ * Env (server only): HOST_SECRET, FIXED_SERVER_URL (authoritative when set).
  *
  * Env vars are read from process.env: SvelteKit 3's `$env/dynamic/private`
  * only exposes variables declared with defineEnvVars.
@@ -85,6 +85,12 @@ async function readRecord(): Promise<DiscoveryRecord | null> {
 }
 
 export const GET: RequestHandler = async () => {
+	const fixed = env('FIXED_SERVER_URL')?.trim();
+	if (fixed) {
+		const url = normalizeServerUrl(fixed);
+		if (!url) return json({ error: 'invalid FIXED_SERVER_URL' }, { status: 503, headers: NO_STORE });
+		return json({ url }, { headers: NO_STORE });
+	}
 	try {
 		const rec = await readRecord();
 		if (!rec || !rec.url || Date.now() - rec.lastSeen > STALE_MS) return json({ url: null }, { headers: GET_HEADERS });
@@ -112,16 +118,36 @@ export const POST: RequestHandler = async ({ request }) => {
 	} catch {
 		return json({ error: 'invalid JSON' }, { status: 400, headers: NO_STORE });
 	}
-	const url = normalizeServerUrl((body as { url?: unknown } | null)?.url);
+	const rawBody = body as { url?: unknown; expectedUrl?: unknown } | null;
+	const url = normalizeServerUrl(rawBody?.url);
 	if (url === undefined) {
 		return json({ error: 'url must be null or an https/wss URL' }, { status: 400, headers: NO_STORE });
+	}
+	let expectedUrl: string | null | undefined = undefined;
+	if (rawBody && rawBody.expectedUrl !== undefined) {
+		expectedUrl = normalizeServerUrl(rawBody.expectedUrl);
+		if (!expectedUrl) {
+			return json({ error: 'expectedUrl must be a valid https/wss URL' }, { status: 400, headers: NO_STORE });
+		}
+	}
+
+	// A deployment-level URL takes precedence without reading or writing the shared cache.
+	const fixed = env('FIXED_SERVER_URL')?.trim();
+	if (fixed) {
+		const fixedUrl = normalizeServerUrl(fixed);
+		if (!fixedUrl) return json({ error: 'invalid FIXED_SERVER_URL' }, { status: 503, headers: NO_STORE });
+		if (url === null) return json({ ok: true, cleared: false, url: fixedUrl }, { headers: NO_STORE });
+		return json({ error: 'fixed server configured', url: fixedUrl }, { status: 409, headers: NO_STORE });
 	}
 
 	try {
 		const now = Date.now();
+		const prev = await readRecord().catch(() => null);
+		if (url === null && expectedUrl && prev?.url && prev.url !== expectedUrl) {
+			return json({ ok: true, cleared: false, url: prev.url }, { headers: NO_STORE });
+		}
 		let startedAt: number | null = null;
 		if (url) {
-			const prev = await readRecord().catch(() => null);
 			startedAt = prev && prev.url === url && prev.startedAt ? prev.startedAt : now;
 		}
 		const rec: DiscoveryRecord = { url, startedAt, lastSeen: now };
@@ -129,7 +155,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		// A failed write is only logged by the cache, so read it back.
 		const kept = await readRecord();
 		if (kept?.lastSeen !== now) throw new Error('the record was not kept');
-		return json({ ok: true, ...rec }, { headers: NO_STORE });
+		return json({ ok: true, ...(url === null ? { cleared: true } : {}), ...rec }, { headers: NO_STORE });
 	} catch (err) {
 		console.error('discovery POST failed:', (err as Error).message);
 		return json({ error: 'cache write failed' }, { status: 502, headers: NO_STORE });

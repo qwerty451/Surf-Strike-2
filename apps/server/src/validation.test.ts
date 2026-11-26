@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { FLAG_TELEPORTED, TICK_RATE } from '@surf/shared';
+import { FLAG_TELEPORTED, TICK_RATE, withTeleportSeq } from '@surf/shared';
 import { RunValidator } from './validation.ts';
 import { netState, testMap } from './test-helpers.ts';
 
@@ -81,6 +81,19 @@ describe('RunValidator', () => {
 		x.onZone('stage', 2, 100, MS(100));
 		x.onState(netState(512, 2050));
 		assert.deepEqual(x.onZone('end', 0, 512, MS(512)), { ok: false, reason: 'position jump' });
+	});
+
+	it('accepts teleports signalled only by the wrapping teleport counter', () => {
+		const w = new RunValidator(testMap());
+		w.onZone('start', 0, 0, 0);
+		w.onState(netState(2, 300, { flags: withTeleportSeq(0, 1) }));
+		w.onZone('stage', 2, 100, MS(100));
+		w.onState(netState(200, 1500, { z: -500, flags: withTeleportSeq(0, 1) }));
+		// Suppose the single-tick FLAG_TELEPORTED packet was dropped; seq 1 -> 2 still allows the respawn jump.
+		w.onState(netState(202, 1050, { z: 10, flags: withTeleportSeq(0, 2) }));
+		w.onState(netState(204, 1060, { flags: withTeleportSeq(0, 2) }));
+		w.onState(netState(512, 2050, { flags: withTeleportSeq(0, 2) }));
+		assert.equal((w.onZone('end', 0, 512, MS(512)) as { ok: boolean }).ok, true);
 	});
 
 	it('accepts teleports to a fixed teleporter destination', () => {

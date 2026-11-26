@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parseCommand } from './commands.ts';
 import { devRotationOverride } from './server.ts';
-import { parseTunnelUrl, publishUrl, readHostEnv } from './tunnel.ts';
+import {
+	clearPublishedUrl,
+	findActiveFixedServer,
+	isQuickTunnelUrl,
+	parseTunnelUrl,
+	publishUrl,
+	readHostEnv
+} from './tunnel.ts';
 
 describe('parseTunnelUrl', () => {
 	it('finds the quick tunnel URL in cloudflared output', () => {
@@ -58,6 +65,82 @@ describe('publishUrl', () => {
 	it('throws on HTTP errors', async () => {
 		const fake = (async () => new Response('nope', { status: 401 })) as unknown as typeof fetch;
 		await assert.rejects(publishUrl({ hostSecret: 's', discoveryUrl: 'https://d' }, null, fake), /401/);
+	});
+});
+
+describe('fixed self-hosted server protection', () => {
+	it('distinguishes quick tunnels from fixed server URLs', () => {
+		assert.equal(isQuickTunnelUrl('https://brave-otter.trycloudflare.com'), true);
+		assert.equal(isQuickTunnelUrl('https://surf.example.com'), false);
+	});
+
+	it('detects a healthy fixed server via FIXED_SERVER_URL or discovery', async () => {
+		const fake = (async (url: string) => {
+			if (url === 'https://fixed.example/health') return new Response(JSON.stringify({ ok: true }), { status: 200 });
+			if (url === 'https://d.example/api/server') return new Response(JSON.stringify({ url: 'https://disc.example' }), { status: 200 });
+			if (url === 'https://disc.example/health') return new Response(JSON.stringify({ ok: true }), { status: 200 });
+			return new Response('nope', { status: 404 });
+		}) as unknown as typeof fetch;
+		assert.equal(
+			await findActiveFixedServer({ discoveryUrl: 'https://d.example', fixedServerUrl: 'https://fixed.example' }, fake),
+			'https://fixed.example'
+		);
+		assert.equal(await findActiveFixedServer({ discoveryUrl: 'https://d.example' }, fake), 'https://disc.example');
+
+		// Quick tunnels in discovery do not block local hosting.
+		const tunnelOnly = (async (url: string) => {
+			if (url === 'https://d.example/api/server') {
+				return new Response(JSON.stringify({ url: 'https://old-host.trycloudflare.com' }), { status: 200 });
+			}
+			return new Response(JSON.stringify({ ok: true }), { status: 200 });
+		}) as unknown as typeof fetch;
+		assert.equal(await findActiveFixedServer({ discoveryUrl: 'https://d.example' }, tunnelOnly), null);
+	});
+
+	it('does not report success when a conditional clear loses a race', async () => {
+		const own = 'https://my-tunnel.trycloudflare.com';
+		const fake: typeof fetch = async (_url, init) =>
+			Response.json(init?.method === 'POST' ? { ok: true, cleared: false, url: 'https://surf.example.com' } : { url: own });
+		assert.equal(await clearPublishedUrl({ hostSecret: 'secret', discoveryUrl: 'https://d.example' }, own, fake), false);
+	});
+
+	it('clearPublishedUrl refuses to clear when discovery points to another server', async () => {
+		const posts: Array<{ url: string; body: string }> = [];
+		const fixedActive = (async (url: string, init?: RequestInit) => {
+			if (!init?.method || init.method === 'GET') {
+				return new Response(JSON.stringify({ url: 'https://surf.example.com' }), { status: 200 });
+			}
+			posts.push({ url, body: String(init.body) });
+			return new Response('{}', { status: 200 });
+		}) as unknown as typeof fetch;
+
+		const clearedOther = await clearPublishedUrl(
+			{ hostSecret: 's3cret', discoveryUrl: 'https://d.example' },
+			'https://my-tunnel.trycloudflare.com',
+			fixedActive
+		);
+		assert.equal(clearedOther, false);
+		assert.equal(posts.length, 0);
+
+		const ownActive = (async (url: string, init?: RequestInit) => {
+			if (!init?.method || init.method === 'GET') {
+				return new Response(JSON.stringify({ url: 'https://my-tunnel.trycloudflare.com' }), { status: 200 });
+			}
+			posts.push({ url, body: String(init.body) });
+			return new Response('{}', { status: 200 });
+		}) as unknown as typeof fetch;
+
+		const clearedOwn = await clearPublishedUrl(
+			{ hostSecret: 's3cret', discoveryUrl: 'https://d.example' },
+			'https://my-tunnel.trycloudflare.com',
+			ownActive
+		);
+		assert.equal(clearedOwn, true);
+		assert.equal(posts.length, 1);
+		assert.deepEqual(JSON.parse(posts[0].body), {
+			url: null,
+			expectedUrl: 'https://my-tunnel.trycloudflare.com'
+		});
 	});
 });
 

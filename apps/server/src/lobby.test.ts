@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import { FLAG_TELEPORTED, MAP_DURATION, Status, VOTE_AT, VOTE_DURATION, TICK_RATE } from '@surf/shared';
+import { FLAG_TELEPORTED, MAP_DURATION, PROTOCOL_VERSION, Status, VOTE_AT, VOTE_DURATION, TICK_RATE } from '@surf/shared';
 import { hashPassword } from './auth.ts';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
@@ -75,11 +75,13 @@ describe('lobby', () => {
 		const res = await fetch(`http://127.0.0.1:${server.port}/health`);
 		const body = await res.json();
 		assert.equal(body.ok, true);
+		assert.equal(body.version, 3);
 		assert.equal(body.map, 'surf_a');
 	});
 
 	it('hello -> welcome, join broadcast, names sanitized', async () => {
 		const { c: a, welcome: wa } = await join('Alice');
+		assert.equal(wa.version, 3);
 		assert.equal(wa.map, 'surf_a');
 		assert.equal(wa.selfId, 1);
 		assert.equal(wa.mapTimeLeft, MAP_DURATION);
@@ -206,25 +208,28 @@ describe('lobby', () => {
 		assert.equal(res.type, 'runResult');
 	});
 
-	it('full lobby: 33rd connection gets {type:"full"}', async () => {
+	it('full lobby: the 33rd connection receives a full frame and closes with 4003', async () => {
 		for (const c of clients) c.close();
 		clients.length = 0;
 		await sleep(200);
-		const many: TestClient[] = [];
-		for (let i = 0; i < 32; i++) {
-			const c = new TestClient(server.port);
-			many.push(c);
-			clients.push(c);
+		for (let i = 0; i < 32; i += 8) {
+			const batch = Array.from({ length: 8 }, () => new TestClient(server.port));
+			clients.push(...batch);
+			await Promise.all(batch.map((c, j) => c.hello(`P${i + j}`)));
 		}
-		await Promise.all(many.map((c, i) => c.hello(`P${i}`)));
 		const extra = new TestClient(server.port);
 		clients.push(extra);
-		await extra.open();
-		await extra.until(() => extra.closed);
-		assert.deepEqual(extra.messages, [{ type: 'full' }]);
-		for (const c of clients) c.close();
-		clients.length = 0;
-		await sleep(200);
+		try {
+			await extra.open();
+			extra.send({ type: 'hello', playerId: 'extra-player', name: 'Extra', version: PROTOCOL_VERSION });
+			await extra.waitFor('full');
+			await extra.until(() => extra.closed);
+			assert.equal(extra.closeCode, 4003);
+		} finally {
+			for (const c of clients) c.close();
+			clients.length = 0;
+			await sleep(200);
+		}
 		assert.equal(server.lobby.clients.size, 0);
 	});
 

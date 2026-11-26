@@ -327,6 +327,22 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		desktopOnly: open === 'desktop',
 		fps: 144,
 		pos: { x: 1024.5, y: -332.25, z: 512, pitch: 4.2, yaw: 91.3, vx: 1200, vy: -460, vz: -88 },
+		netGraph: params.has('netgraph')
+			? {
+					rttMs: 24,
+					jitterMs: 2.8,
+					interpMs: 63,
+					snapHz: 32,
+					underruns: 0,
+					underrunMs: 0,
+					extrapMs: 0,
+					dupPct: 0,
+					lateCount: 0,
+					inBytesPerSec: 18_400,
+					outBytesPerSec: 2_816,
+					samples: Array.from({ length: 120 }, (_, i) => ({ gapMs: 31.25 + ((i * 7) % 9) - 4, underrun: i === 70, rttMs: 24 + (i % 4) }))
+				}
+			: null,
 		cvars: {
 			sensitivity: 2.5,
 			m_yaw: 0.022,
@@ -336,6 +352,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 			cl_showfps: 1,
 			cl_showkeys: params.get('keys') === '0' ? 0 : 1,
 			cl_showpos: 0,
+			net_graph: params.has('netgraph') ? Number(params.get('netgraph') || 1) : 0,
 			cl_crosshairsize: 5,
 			cl_crosshairgap: 1,
 			cl_crosshairthickness: 1,

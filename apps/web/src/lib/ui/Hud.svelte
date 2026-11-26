@@ -16,6 +16,7 @@
 	import { crosshairOpacity } from '#lib/game/gunfeel.js';
 	import KeysDisplay from '#lib/ui/KeysDisplay.svelte';
 	import PosReadout from '#lib/ui/PosReadout.svelte';
+	import NetGraph from '#lib/ui/NetGraph.svelte';
 	import Scoreboard from '#lib/ui/Scoreboard.svelte';
 	import SpectatorBar from '#lib/ui/SpectatorBar.svelte';
 	import Console from '#lib/ui/Console.svelte';
@@ -48,6 +49,7 @@
 	const showFps = $derived(cvarNum(hud.cvars, 'cl_showfps', 0) !== 0);
 	const showKeys = $derived(cvarNum(hud.cvars, 'cl_showkeys', 0) !== 0);
 	const showPos = $derived(cvarNum(hud.cvars, 'cl_showpos', 0) !== 0);
+	const netGraphLevel = $derived(cvarNum(hud.cvars, 'net_graph', 0));
 	const showScorePanel = $derived(cvarNum(hud.cvars, 'cl_scorepanel', 1) !== 0 && !hud.scoreboardOpen);
 	const scoreInput: ScorePanelInput = $derived({
 		rows: hud.scoreboard,
@@ -91,6 +93,9 @@
 				{showFps}
 				fps={hud.fps}
 			/>
+			{#if netGraphLevel > 0}
+				<NetGraph graph={hud.netGraph} level={netGraphLevel} online={hud.online} fps={hud.fps} />
+			{/if}
 		</div>
 
 		<div class="top-left">
@@ -220,6 +225,10 @@
 		position: absolute;
 		top: 14px;
 		right: 18px;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 6px;
 	}
 	.top-left {
 		position: absolute;

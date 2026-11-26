@@ -35,7 +35,13 @@ export function buildSight(map: Pick<MapDef, 'brushes'> & { theme: Pick<MapDef['
 			? buildCollisionWorld({ brushes: map.brushes.filter((b) => !seeThrough(b)).map((b) => (b.solid === false ? { ...b, solid: true } : b)) })
 			: solid;
 	const free = (w: typeof solid) => (a: Vec3, b: Vec3) => w.trace(a, b, ZERO, ZERO).fraction >= 1;
-	return { visible: free(visual), clear: free(solid) };
+	return {
+		visible: free(visual),
+		clear: (a, b) => {
+			const trace = solid.trace(a, b, ZERO, ZERO);
+			return !trace.startsolid && trace.fraction >= 1;
+		}
+	};
 }
 
 /** A player as the tracker needs it: feet position, view angles (degrees, pitch down positive). */

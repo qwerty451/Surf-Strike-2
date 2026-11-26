@@ -15,6 +15,7 @@ import {
 	buildCollisionWorld,
 	buildSight,
 	FLAG_DUCKED,
+	FLAG_TELEPORTED,
 	formatTenths,
 	HNS_PAY,
 	HNS_MAX_REWIND_MS,
@@ -34,7 +35,7 @@ import {
 } from '@surf/shared';
 import type { Command } from '../commands.ts';
 import type { ModeClientMessage, ModeHost, ModePlayer, ServerMode } from './types.ts';
-import { EMPTY_RECORDS } from './types.ts';
+import { EMPTY_RECORDS, renderRewindMs } from './types.ts';
 
 /** Mode state is re-sent at least this often (ms). */
 export const HNS_STATE_MS = 1000;
@@ -132,7 +133,7 @@ export class HnsMode implements ServerMode {
 
 	state(p: ModePlayer, s: NetState): void {
 		const now = this.host.now();
-		this.game.setPos(p.id, { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0 }, now);
+		this.game.setPos(p.id, { x: s.x, y: s.y, z: s.z, ducked: (s.flags & FLAG_DUCKED) !== 0 }, now, (s.flags & FLAG_TELEPORTED) !== 0);
 		if (overSpeedCap(s.vx, s.vy)) {
 			const prev = this.overCap.get(p.id) ?? -Infinity;
 			if (now - prev > 5000) this.host.log(`hns: #${p.id} ${p.name} over the ${HNS_SPEED_LIMIT} u/s limit (${Math.round(Math.hypot(s.vx, s.vy))})`);
@@ -151,7 +152,7 @@ export class HnsMode implements ServerMode {
 		if (msg.type !== 'knife' || p.spectating || !this.game.has(p.id)) return;
 		const now = this.host.now();
 		if (now - (this.overCap.get(p.id) ?? -Infinity) < HNS_SPEED_PENALTY_MS) return;
-		const rewind = Math.min(HNS_MAX_REWIND_MS, p.ping + HNS_VIEW_DELAY_MS);
+		const rewind = renderRewindMs(msg.renderServerTimeMs, this.host.serverNow?.() ?? now, p, HNS_MAX_REWIND_MS, p.ping + HNS_VIEW_DELAY_MS);
 		const res = this.game.swing(p.id, { origin: msg.origin, dir: msg.dir }, now, rewind);
 		if (res.ok) this.hunt.attempt(p.id);
 		this.dispatch(res.events);
@@ -340,7 +341,7 @@ export class HnsMode implements ServerMode {
 					continue;
 				}
 				case 'swing':
-					for (const p of h.players()) if (p.id !== ev.by) h.send(p, { type: 'hns', ev });
+					h.broadcast({ type: 'hns', ev }, ev.by);
 					continue;
 			}
 			changed = true;

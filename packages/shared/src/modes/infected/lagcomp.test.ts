@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { restMotion } from '../../body-motion.ts';
 import { INTERP_DELAY_MS, SNAPSHOT_HZ } from '../../protocol.ts';
 import type { Vec3 } from '../../types.ts';
@@ -201,6 +201,45 @@ describe('lag compensation in the game', () => {
 		}
 	});
 
+	it('uses the observed pose for the first tick of a two-tick update', () => {
+		const { g, leg } = crossing();
+		g.put(1, { x: 0, y: 600 });
+		g.advance(INF_STEP_MS);
+		const tick = g.game.tick + 1;
+		g.put(1, { x: 60, y: 600 });
+		g.advance(2 * INF_STEP_MS, 2 * INF_STEP_MS);
+		expect(g.game.tick).toBe(tick + 1);
+		g.put(2, { x: 60, y: 350 });
+		expect(hits(g.fireAt(2, leg(60), { tick }))).toBe(1);
+	});
+
+	it('records each player once per observation, even when eight sim ticks catch up', () => {
+		const c = crossing(INF_STEP_MS * 2);
+		const record = vi.spyOn(PoseHistory.prototype, 'record');
+		try {
+			c.run(INF_STEP_MS * 2);
+			c.g.advance(125, 125);
+			expect(record.mock.calls.map(([at]) => at)).toEqual([
+				...Array<number>(3).fill(c.g.clock.now - 125),
+				...Array<number>(3).fill(c.g.clock.now)
+			]);
+		} finally {
+			record.mockRestore();
+		}
+	});
+
+	it('keeps the full 400 ms rewind at 32 Hz, even after a 125 ms update gap', () => {
+		const c = crossing(INF_STEP_MS * 2);
+		c.run(1000);
+		const gap = 125;
+		c.g.put(1, { x: c.xAt(c.g.clock.now + gap), y: 600 });
+		c.g.advance(gap, gap);
+		c.run(125);
+		const x = c.xAt(c.g.clock.now - INF_HISTORY_MS);
+		c.g.put(2, { x, y: 350 });
+		expect(hits(c.g.fireAt(2, c.leg(x), { rewindMs: INF_HISTORY_MS }))).toBe(1);
+	});
+
 	it('the rewind is clamped to INF_HISTORY_MS', () => {
 		// 5 s asked: the pose of 400 ms ago is tested, not an older one and not the current one.
 		expect(shot(2000, INF_HISTORY_MS, 0, { rewindMs: 5000 })).toBe(1);
@@ -241,6 +280,17 @@ describe('lag compensation in the game', () => {
 		// Nor a pose in between the two.
 		g.advance(INF_STEP_MS * 8);
 		expect(hits(g.fireAt(2, chest({ x: (a.x + spawn.x) / 2, y: (a.y + spawn.y) / 2 }), { rewindMs: 100 }))).toBe(0);
+	});
+
+	it('drops the old pose on a flagged client teleport shorter than the distance guard', () => {
+		const g = kitPlaying([1, 2, 3], { round: 3 });
+		g.put(1, { x: -200, y: 0 });
+		g.put(2, { x: -200, y: -400 });
+		g.advance(500);
+		g.game.setPlayerPos(1, { x: 100, y: 0, z: 0, yaw: 0, ducked: false }, true);
+		g.advance(INF_STEP_MS);
+		const oldChest = playerPoint({ x: -200, y: 0, z: 0, yaw: 0, ducked: false, hunched: true }, 'ribs');
+		expect(hits(g.fireAt(2, oldChest, { rewindMs: 200 }))).toBe(0);
 	});
 
 	it('never uses the pose of an earlier stay: a player who leaves and rejoins starts a fresh history', () => {

@@ -411,6 +411,8 @@ export interface CharacterPreviewHandle {
 	dispose(): void;
 }
 
+export type { NetGraphSample, NetGraphView } from '../net/stats.js';
+
 export interface BanView {
 	reason: string | null;
 	/** performance.now() when it lifts by itself; null = permanent. */
@@ -519,6 +521,7 @@ export interface HudStateShape {
 	// Debug readouts (only meaningful when the matching cvar is on)
 	fps: number;
 	pos: { x: number; y: number; z: number; pitch: number; yaw: number; vx: number; vy: number; vz: number };
+	netGraph: import('../net/stats.js').NetGraphView | null;
 	// Client cvar mirror for UI (crosshair, showfps, ...). Keys are cvar names.
 	cvars: Record<string, number | string>;
 }

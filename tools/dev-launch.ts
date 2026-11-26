@@ -33,6 +33,7 @@ import {
 	Status,
 	tagSpawns,
 	WEAPONS,
+	withTeleportSeq,
 	type GameModeId,
 	type MapDef,
 	type ServerMessage,
@@ -417,6 +418,8 @@ export class Bot {
 	private t0 = performance.now();
 	private anchorAt = performance.now();
 	private teleported = true;
+	private tpSeq = 0;
+	private spawnSeq = 0;
 	private zombieTick = 0;
 	private closed = false;
 	/** When the bot last switched weapons itself (the server enforces a draw time from then). */
@@ -505,11 +508,21 @@ export class Bot {
 			case 'ping':
 				this.send({ type: 'pong', t: msg.t });
 				break;
+			case 'hns':
+				if (msg.ev.e === 'spawn' && msg.ev.id === this.selfId && msg.spawnSeq !== this.spawnSeq) {
+					this.spawnSeq = msg.spawnSeq ?? 0;
+					this.moveTo({ ...msg.ev.pos, yaw: msg.ev.yaw });
+				}
+				break;
 			case 'zm':
-				if (msg.ev.e === 'spawn' && msg.ev.id === this.selfId) this.moveTo(msg.ev);
+				if (msg.ev.e === 'spawn' && msg.ev.id === this.selfId && msg.spawnSeq !== this.spawnSeq) {
+					this.spawnSeq = msg.spawnSeq ?? 0;
+					this.moveTo(msg.ev);
+				}
 				break;
 			case 'inf':
-				if (msg.ev.e === 'spawn' && msg.ev.id === this.selfId) {
+				if (msg.ev.e === 'spawn' && msg.ev.id === this.selfId && msg.spawnSeq !== this.spawnSeq) {
+					this.spawnSeq = msg.spawnSeq ?? 0;
 					this.weapon = msg.ev.weapon;
 					// Handed out by the server: already drawn.
 					this.swapAt = -Infinity;
@@ -563,11 +576,13 @@ export class Bot {
 		if (this.ws.readyState !== WebSocket.OPEN || this.spectating) return;
 		const now = performance.now();
 		const p = this.pose(now);
-		const flags = FLAG_ON_GROUND | (this.teleported ? FLAG_TELEPORTED : 0);
+		if (this.teleported) this.tpSeq = (this.tpSeq + 1) & 0xff;
+		const flags = withTeleportSeq(FLAG_ON_GROUND | (this.teleported ? FLAG_TELEPORTED : 0), this.tpSeq);
 		this.teleported = false;
 		this.ws.send(
 			encodeState({
 				tick: Math.round(((now - this.t0) / 1000) * 64),
+				spawnSeq: this.spawnSeq,
 				x: p.x,
 				y: p.y,
 				z: p.z,

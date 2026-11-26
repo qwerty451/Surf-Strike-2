@@ -150,6 +150,7 @@ Opened with `` ` `` or `~`. A CS-style panel in the top half of the screen: scro
 | `cl_showfps` | 0 | FPS counter |
 | `cl_showpos` | 0 | Position, angles, velocity readout |
 | `cl_showkeys` | 0 | Pressed-keys display |
+| `net_graph` | 0 | Network telemetry overlay (`1` compact bar, `2` bar + snapshot-gap sparkline) |
 | `cl_hideplayers` | 0 | Hide other players |
 | `cl_scorepanel` | 1 | Show the score panel ([Score panel](#score-panel)) |
 | `cl_boxnews` | 1 | Show what other players get from loot boxes and win in the casino ([Loot box and casino news](#box-news)) |

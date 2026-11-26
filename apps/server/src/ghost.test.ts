@@ -23,7 +23,7 @@ async function join(name: string) {
 }
 
 /** A valid run of `total` ticks (a multiple of 16), one state per 16 ticks (state rate limit). */
-async function run(c: TestClient, total: number) {
+async function run(c: TestClient, total: number, switchTo?: string) {
 	const t0 = 20_000;
 	c.sendState(netState(t0 - 1, 150, { status: Status.StartZone }));
 	c.send({ type: 'zone', kind: 'start', index: 0, tick: t0 });
@@ -39,6 +39,7 @@ async function run(c: TestClient, total: number) {
 	const n = c.messages.length;
 	c.send({ type: 'zone', kind: 'end', index: 0, tick: t0 + total });
 	c.sendState(netState(t0 + total + 1, 9999, { status: Status.Finished }));
+	if (switchTo) c.send({ type: 'changeMap', mapId: switchTo });
 	return c.waitFor('runResult', () => true, n);
 }
 
@@ -76,7 +77,7 @@ describe('record ghosts', () => {
 		const res = await run(c, 640);
 		assert.equal(res.record, true);
 
-		const row = server.db.getReplay('surf_a');
+		const row = await c.until(() => server.db.getReplay('surf_a'));
 		assert.ok(row);
 		assert.equal(row.name, 'Racer');
 		assert.equal(row.ticks, 640);
@@ -116,10 +117,25 @@ describe('record ghosts', () => {
 		await sleep(1100);
 		const fast = await run(c, 576);
 		assert.equal(fast.record, true);
-		assert.equal(server.db.getReplay('surf_a')?.ticks, 576);
+		await c.until(() => server.db.getReplay('surf_a')?.ticks === 576);
 		c.close();
 		watcher.close();
 		asker.close();
+	});
+
+	it('sends the result before a map change and saves the replay for the original map', async () => {
+		const c = await join('Racer');
+		await c.until(() => server.lobby.playerCount === 1);
+		assert.equal((await c.auth('login', 'Racer', 'secret1')).ok, true);
+		const n = c.messages.length;
+		const res = await run(c, 512, 'surf_b');
+		const change = await c.waitFor('mapChange', (m) => m.map === 'surf_b', n);
+		assert.ok(c.messages.indexOf(res) < c.messages.indexOf(change));
+		await c.until(() => server.db.getReplay('surf_a')?.ticks === 512);
+		assert.equal(c.ghosts.some((g) => g.map === 'surf_a' && g.ticks === 512), false);
+		c.send({ type: 'changeMap', mapId: 'surf_a' });
+		await c.waitFor('mapChange', (m) => m.map === 'surf_a', n);
+		c.close();
 	});
 
 	it('guest runs never store a replay', async () => {

@@ -44,7 +44,7 @@ Owner's rule. In Zombie Run, Infected, Hide and seek and Tag every award, includ
 
 The minimum player counts below use the same definition of active. A round that starts with fewer says so in chat.
 
-**Connections:** in production at most 3 clients per IP address (IPv6: per /64) may be connected, so a lobby cannot be filled with one person's bots.
+**Connections:** in production at most 12 clients per IP by default address (IPv6: per /64) may be connected, so a lobby cannot be filled with one person's bots.
 
 ## Playtime
 
@@ -142,7 +142,7 @@ Detection must not be sensitive. Friends who play together, a bad seeker, a luck
 **Prevention** (no punishment, the award is simply not paid):
 
 - AFK players do not count towards minimum player counts and earn nothing.
-- At most 3 connections per IP address in production, and one count per account.
+- At most 12 connections per IP address by default in production, and one count per account.
 - Caps and decay as listed per mode.
 - A backstop of 250 points per rolling hour per account, counted before the multiplier, playtime included, excluding first-finish and record bonuses. What is left of it is paid. When it cuts or refuses an award, the player is told once per hour, with the minutes until more is paid.
 - Awards are rejected for 5 seconds after a horizontal speed above the mode's sanity limit, or a jump in position faster than that limit that is not a respawn by the mode, a map spawn or a teleport destination. The limits (`SPEED_LIMIT`, units/s) are well above normal play, they are not the movement caps: hide and seek 600, Infected and Zombie Run 1000, tag 3500, surf and bhop 16384 (runs are validated anyway).

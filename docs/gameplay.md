@@ -134,7 +134,7 @@ The leaderboard needs to know who set a time, so it only counts accounts. An acc
 
 ## Admin
 
-Admin accounts (server config `ADMIN_USERNAMES`, default `tim`; [architecture.md](architecture.md#admin-and-bans)) get an **Admin** entry in the Esc menu ([ui.md](ui.md#admin)). Being admin depends only on the logged-in account, never on the display name; a guest named "Tim" is not an admin.
+Admin accounts (server config `ADMIN_USERNAMES`, unset by default; [architecture.md](architecture.md#admin-and-bans)) get an **Admin** entry in the Esc menu ([ui.md](ui.md#admin)). Being admin depends only on the logged-in account, never on the display name; a guest named "Tim" is not an admin.
 
 - **Maps:** enable or disable maps. Disabled maps leave the vote options, `!rtv` and the Change map list; the current map keeps running until it ends. At least one map stays enabled.
 - **Force change:** switch everyone to any map at once (disabled ones too); **Extend +10 min** adds time to the current map.

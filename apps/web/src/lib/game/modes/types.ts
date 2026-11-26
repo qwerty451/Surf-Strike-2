@@ -72,6 +72,10 @@ export interface ClientModeHost {
 	readonly online: boolean;
 	/** −1 offline. */
 	readonly selfId: number;
+	/** Current adaptive remote interpolation delay (ms); hook for client-render-time lag compensation. */
+	readonly interpDelayMs: number;
+	/** Server monotonic time (ms) currently rendered for remote players (`serverClock - interpDelayMs`). */
+	readonly renderServerTimeMs: number;
 	/** The spectated player (not in free-fly), else me: whose role the HUD shows. */
 	readonly viewId: number;
 	/** A map vote is open. */
