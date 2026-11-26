@@ -106,7 +106,7 @@ export function registerCommands(con: DevConsole, ctx: CommandContext): void {
 	reg('messagemode', 'Open chat', () => ctx.openChat());
 	reg('say', 'say <text>: send chat', (_a, raw) => ctx.say(raw));
 	reg('toggleconsole', 'Toggle the console', () => ctx.toggleConsole());
-	reg('vote', 'vote <n>: vote in the map vote (1-7), or 1 = yes / 2 = no on an RTV request', (args) => {
+	reg('vote', 'vote <n>: vote in the map vote (1-9), or 1 = yes / 2 = no on an RTV request', (args) => {
 		const n = Number(args[0]);
 		if (Number.isInteger(n) && n >= 1) ctx.vote(n);
 	});

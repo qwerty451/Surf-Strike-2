@@ -582,7 +582,7 @@ export function createMockGame(canvas: HTMLCanvasElement, open: string | null): 
 		} else if (e.key === 'r') {
 			hud.splitPopup = { label: 'Stage 4', ticks: hud.runTicks, delta: Math.round(0.42 * T), at: performance.now() };
 		} else if (hud.rtvRequest && (e.key === '1' || e.key === '2')) api.rtvVote(e.key === '1');
-		else if (e.key >= '1' && e.key <= '7') api.vote(Number(e.key));
+		else if (e.key >= '1' && e.key <= '9') api.vote(Number(e.key));
 	};
 	const up = (e: KeyboardEvent) => {
 		if (e.key === 'Tab') hud.scoreboardOpen = false;

@@ -625,7 +625,7 @@ export class Game implements CommandContext {
 			const shortcut = isBrowserShortcut(name, e);
 			if (shortcut && !this.input.locked && (name === 'w' || name === 't' || name === 'n')) return false;
 			const swallow = shortcut && this.input.locked;
-			// Number keys go to an open map vote (1-7) or RTV request (1/2) instead of their binds.
+			// Number keys go to an open map vote (1-9) or RTV request (1/2) instead of their binds.
 			const route = routeVoteKey(name, this.voteKeyState());
 			if (route) {
 				if (!e.repeat) {

@@ -200,11 +200,11 @@ describe('MapRotation', () => {
 		expect([0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 32].map(MapRotation.rtvNeeded)).toEqual([1, 1, 1, 1, 2, 2, 2, 3, 3, 4, 11]);
 	});
 
-	it('limits options to 7 random other maps', () => {
+	it('limits options to 8 random other maps', () => {
 		const r = new MapRotation({ maps: 'abcdefghij'.split(''), current: 'a', now: 0, rng: () => 0.5 });
 		const vs = ofType(r.update((MAP_DURATION - VOTE_AT) * S, 1), 'voteStart')[0];
-		expect(MAX_VOTE_MAPS).toBe(7);
-		expect(vs.options.filter((o) => o.kind === 'map')).toHaveLength(7);
+		expect(MAX_VOTE_MAPS).toBe(8);
+		expect(vs.options.filter((o) => o.kind === 'map')).toHaveLength(8);
 		expect(vs.options.some((o) => o.kind === 'map' && o.mapId === 'a')).toBe(false);
 	});
 
@@ -244,10 +244,10 @@ describe('MapRotation', () => {
 	});
 });
 
-// Categories: s* surf, b* bhop, t* tag, z* zombies, i* infected, h* hide and seek.
-const KIND: Record<string, string> = { s: 'surf', b: 'bhop', t: 'tag', z: 'zombies', i: 'infected', h: 'hns' };
+// Categories: s* surf, b* bhop, t* tag, z* zombies, i* infected, h* hide and seek, u* tournament.
+const KIND: Record<string, string> = { s: 'surf', b: 'bhop', t: 'tag', z: 'zombies', i: 'infected', h: 'hns', u: 'tournament' };
 const kindOf = (id: string) => KIND[id[0]] ?? 'other';
-const CAT_MAPS = ['s1', 's2', 's3', 's4', 'b1', 'b2', 'b3', 't1', 't2', 'z1', 'z2', 'i1', 'i2', 'h1', 'h2'];
+const CAT_MAPS = ['s1', 's2', 's3', 's4', 'b1', 'b2', 'b3', 't1', 't2', 'z1', 'z2', 'i1', 'i2', 'h1', 'h2', 'u1', 'u2'];
 const mapIds = (opts: { kind: string; mapId?: string }[]) => opts.filter((o) => o.kind === 'map').map((o) => o.mapId!);
 const kinds = (ids: string[]) => ids.map(kindOf);
 
@@ -264,20 +264,20 @@ function catRotation(opts: { maps?: string[]; current?: string; rng?: () => numb
 const timedVote = (r: MapRotation) => ofType(r.update((MAP_DURATION - VOTE_AT) * S, 1), 'voteStart')[0];
 
 describe('MapRotation vote options by category', () => {
-	it('2 surf and 1 map of every other mode in category order, extend as option 8', () => {
+	it('2 surf and 1 map of every other mode in category order, extend as option 9', () => {
 		for (const x of [0, 0.3, 0.7, 0.99]) {
 			const vs = timedVote(catRotation({ rng: () => x }));
 			const ids = mapIds(vs.options);
-			expect(kinds(ids)).toEqual(['surf', 'surf', 'bhop', 'tag', 'zombies', 'infected', 'hns']);
-			expect(new Set(ids).size).toBe(7);
+			expect(kinds(ids)).toEqual(['surf', 'surf', 'bhop', 'tag', 'zombies', 'infected', 'hns', 'tournament']);
+			expect(new Set(ids).size).toBe(8);
 			expect(ids).not.toContain('s1');
-			expect(vs.options).toHaveLength(8);
-			expect(vs.options[7]).toEqual({ kind: 'extend' });
+			expect(vs.options).toHaveLength(9);
+			expect(vs.options[8]).toEqual({ kind: 'extend' });
 		}
 	});
 
 	it('fills free slots from other categories, fewer only without enough maps', () => {
-		// No zombies/infected, one tag map: free slots taken by surf/bhop extras.
+		// No zombies/infected/hns/tournament, one tag map: free slots taken by surf/bhop extras.
 		const maps = ['s1', 's2', 's3', 's4', 'b1', 'b2', 'b3', 't1'];
 		const ids = mapIds(timedVote(catRotation({ maps })).options);
 		expect(ids).toHaveLength(7);
@@ -286,7 +286,7 @@ describe('MapRotation vote options by category', () => {
 		expect(kinds(ids).filter((k) => k === 'surf').length).toBeGreaterThanOrEqual(2);
 		expect(kinds(ids).filter((k) => k === 'bhop').length).toBeGreaterThanOrEqual(2);
 		// Stable order by category.
-		const order = ['surf', 'bhop', 'tag', 'zombies', 'infected', 'hns'];
+		const order = ['surf', 'bhop', 'tag', 'zombies', 'infected', 'hns', 'tournament'];
 		const k = kinds(ids).map((c) => order.indexOf(c));
 		expect([...k].sort((a, b) => a - b)).toEqual(k);
 		// Only 3 other maps: 3 options.
@@ -306,7 +306,7 @@ describe('MapRotation vote options by category', () => {
 	it('excludes disabled and current maps', () => {
 		const off = new Set(['s2', 's3', 'z1', 'z2']);
 		const ids = mapIds(timedVote(catRotation({ isEnabled: (id) => !off.has(id) })).options);
-		expect(ids).toHaveLength(7);
+		expect(ids).toHaveLength(8);
 		for (const m of [...off, 's1']) expect(ids).not.toContain(m);
 		expect(ids).toContain('s4');
 	});
@@ -317,7 +317,7 @@ describe('MapRotation vote options by category', () => {
 			const ev = r.requestRtv('p1', 1, RTV_BLOCK * S, 'b3');
 			const ids = mapIds(ofType(ev, 'voteStart')[0].options);
 			expect(ids).toContain('b3');
-			expect(kinds(ids)).toEqual(['surf', 'surf', 'bhop', 'tag', 'zombies', 'infected', 'hns']);
+			expect(kinds(ids)).toEqual(['surf', 'surf', 'bhop', 'tag', 'zombies', 'infected', 'hns', 'tournament']);
 		}
 		// RTV votes have no extend option.
 		const r = catRotation();

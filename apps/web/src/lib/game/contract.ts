@@ -596,7 +596,7 @@ export interface GameApi {
  *
  * Keyboard/mouse ownership:
  * - The engine listens on window for keys/mouse and runs binds (movement,
- *   Y = openChat, ` / ~ = toggleConsole, Tab = scoreboard while held, 1-7 map vote /
+ *   Y = openChat, ` / ~ = toggleConsole, Tab = scoreboard while held, 1-9 map vote /
  *   1-2 RTV request (vote.ts routeVoteKey, ahead of binds),
  *   M spectate, R restart, wheel jump). Pointer-lock loss while no overlay is
  *   open sets settingsOpen = true (browsers swallow Esc when exiting lock).

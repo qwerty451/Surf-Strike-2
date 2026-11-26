@@ -13,7 +13,7 @@ The HUD is Svelte components layered over the Three.js canvas.
 | Top centre | Map name and time left (`surf_ember · 07:42`) |
 | Top right | Connection status (`Online · 12 / 32` or `Offline — solo`), FPS if `cl_showfps 1` |
 | Bottom left | Chat (fades after 8 s; full history while typing) |
-| Left middle | Vote panel (up to 7 options "Surf · Kessler" … "Extend 10 min" with key numbers and live vote counts, countdown bar) |
+| Left middle | Vote panel (up to 9 options "Surf · Kessler" … "Extend 10 min" with key numbers and live vote counts, countdown bar) |
 | Top centre, below map name | RTV request modal (see [RTV request](#rtv-request)) |
 | Top centre, below all of that | [Loot box news](#box-news) |
 | Top left | Award popups ([Award popups](#award-popups)), below the position readout |
@@ -225,7 +225,7 @@ The race ghost ([gameplay.md](gameplay.md#ghosts)) is the player character ([cha
 | `Ctrl` | Crouch |
 | `Y` | Chat |
 | `Tab` | Scoreboard |
-| `1`–`8` | Map vote (while open); `1` / `2` = yes / no on an RTV request; else their binds (Zombie Run weapons `1`–`4`; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B., or next primary on the practice range) |
+| `1`–`9` | Map vote (while open); `1` / `2` = yes / no on an RTV request; else their binds (Zombie Run weapons `1`–`4`; Infected `1` primary, `2` pistol, `3` knife, `4` call M.O.A.B., or next primary on the practice range) |
 | `Mouse1` | Attack: fire, knife or claw swing |
 | `Mouse2` | Zombie Run: sniper scope. Infected: aim down sights (held; toggled with `cl_aimtoggle 1`), or throw the knife as infected |
 | `M` | Toggle spectate |
