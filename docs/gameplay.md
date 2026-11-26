@@ -95,7 +95,7 @@ Race columns: name, map rank, PB, status (`Start zone`, `Stage 3`, `Running`, `S
 
 ## Map rotation and voting
 
-- Each map runs for 15:00.
+- Each map runs for 45:00.
 - At 0:30 left, a 20-second vote opens for everyone.
 - Options: up to 8 maps (`MAX_VOTE_MAPS`), picked at random from the enabled maps other than the current one: 2 surf and 1 each of bhop, tag, Zombie Run, Infected, Hide and seek and Zombie Defense (`VOTE_MAP_SLOTS`). A category with too few maps leaves free slots, filled with random maps of the other categories, so there are still 8 distinct maps (fewer only when fewer maps are enabled). They are listed by category in that order, each labelled with it ("Surf · Kessler", "Zombie Run · …"), in the panel and in the chat lines. The timed vote adds "Extend 10 min" as the last option (option 9 with 8 maps). Keys `1`–`8` (`MAP_VOTE_KEYS` in the web client's `vote.ts`) vote while the vote is open, instead of their binds (no weapon switch); changing a vote is allowed until it closes.
 - Most votes wins. Ties are broken at random. No votes at all: a random map from the options.
@@ -108,14 +108,14 @@ Race columns: name, map rank, PB, status (`Start zone`, `Stage 3`, `Running`, `S
   - Nomination: a map picked from Change map is guaranteed a slot in the vote if the request passes (it replaces a random slot of its own category). The current map and admin-disabled maps cannot be nominated.
   - Chat gets short system lines (request started, passed or declined); the modal is the main UI.
 - After a vote, a 5-second countdown, then everyone switches map. Running timers are cancelled.
-- Alone in the lobby (the only connected client, spectators included), you can switch map at once from the Esc menu (Change map) or with console `map <name>`: the same change as a vote win (any vote is cancelled, the 15:00 timer and extends reset). With anyone else connected, the same pick (or `map <name>`) starts an RTV request nominating that map instead.
+- Alone in the lobby (the only connected client, spectators included), you can switch map at once from the Esc menu (Change map) or with console `map <name>`: the same change as a vote win (any vote is cancelled, the 45:00 timer and extends reset). With anyone else connected, the same pick (or `map <name>`) starts an RTV request nominating that map instead.
 - Maps an admin disabled never come up in votes, `!rtv` or random picks, and normal players cannot pick them from Change map (shown greyed "Disabled by admin"). See [Admin](#admin).
 - Maps are generated from code in the client bundle, so a map change has no download.
 
 ## Solo (offline) mode
 
 - Same maps, timer, zones and splits as online.
-- The 15-minute rotation and vote run locally; only you vote.
+- The 45-minute rotation and vote run locally; only you vote.
 - Console `map <name>` or the Esc menu's Change map list changes map directly.
 - HUD shows "Offline — solo". When the server comes online, the client connects and joins the server's current map.
 

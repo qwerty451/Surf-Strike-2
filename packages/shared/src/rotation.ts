@@ -26,7 +26,7 @@
  */
 import type { VoteOption } from './protocol.ts';
 
-export const MAP_DURATION = 15 * 60;
+export const MAP_DURATION = 45 * 60;
 export const EXTEND_DURATION = 10 * 60;
 export const MAX_EXTENDS = 2;
 export const VOTE_AT = 30; // seconds left
