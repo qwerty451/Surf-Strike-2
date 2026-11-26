@@ -13,6 +13,8 @@ import {
 	ZD_TURRET_TYPES,
 	ZD_TURRETS,
 	ZD_WEAPONS,
+	ZD_ZOMBIES,
+	zdBossCount,
 	zdTurretCost,
 	zdTurretRefund,
 	type DefenseMapInfo,
@@ -306,4 +308,24 @@ export function zdReasonText(reason: string | undefined): string {
 		default:
 			return reason ? `Refused (${reason})` : 'Refused';
 	}
+}
+
+/** Wave start banner: "Wave 10 · 2 Behemoths are coming". */
+export function bossWaveText(wave: number): string {
+	const n = zdBossCount(wave);
+	if (n === 0) return `Wave ${wave}`;
+	return n === 1 ? `Wave ${wave} · a ${ZD_ZOMBIES.boss.label} is coming` : `Wave ${wave} · ${n} ${ZD_ZOMBIES.boss.label}s are coming`;
+}
+
+/** "a", "a and b", "a, b and c". */
+export function joinNames(names: readonly string[]): string {
+	return names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/** Wave banner part naming the attacked openings: " · from the north door and east window". */
+export function attackText(from: readonly number[] | undefined, total: number, name: (i: number) => string): string {
+	if (!Array.isArray(from) || from.length === 0) return '';
+	if (from.length >= total) return ' · from every side';
+	if (from.length > 3) return ` · from ${from.length} openings`;
+	return ` · from the ${joinNames(from.map(name))}`;
 }

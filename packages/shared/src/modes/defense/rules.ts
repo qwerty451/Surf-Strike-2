@@ -140,6 +140,14 @@ export function zdIsBossWave(wave: number): boolean {
 	return wave > 0 && wave % ZD_BOSS_EVERY === 0;
 }
 
+/**
+ * Openings the zombies of a wave attack: 1 + floor(wave / 2), at most all of
+ * them (wave 1: 1, waves 2-3: 2, waves 4-5: 3, ...). Picked spread round the base.
+ */
+export function zdAttackOpenings(wave: number, total: number): number {
+	return Math.max(1, Math.min(total, 1 + Math.floor(Math.max(1, wave) / 2)));
+}
+
 /** Bosses in a wave: wave / 5 on every 5th wave (1, 2, 3, ...), else 0. */
 export function zdBossCount(wave: number): number {
 	return zdIsBossWave(wave) ? wave / ZD_BOSS_EVERY : 0;

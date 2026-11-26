@@ -1,7 +1,7 @@
 /** Zombie Defense view helpers: weapon keys, the E target and the shop / pad menu rows. */
 import { defenseFixtureMap, getMap, ZD_SHOP, zdTurretCost, zdTurretRefund, type ZdOpeningView, type ZdPlayerView } from '@surf/shared';
 import { describe, expect, it } from 'vitest';
-import { zdPadMenu, zdPromptText, zdReasonText, zdShopMenu, zdSlotWeapon, zdTurretStats, zdUseTarget, zdWeaponKeys } from './defense-view.js';
+import { attackText, bossWaveText, joinNames, zdPadMenu, zdPromptText, zdReasonText, zdShopMenu, zdSlotWeapon, zdTurretStats, zdUseTarget, zdWeaponKeys } from './defense-view.js';
 
 const INFO = getMap('defense_blackthorn')!.defense!;
 const full = (): ZdOpeningView[] => INFO.openings.map((o) => ({ planks: o.planks ?? 6, max: o.planks ?? 6, reinforce: 0 }));
@@ -131,3 +131,19 @@ describe('pad menu', () => {
 		expect(zdReasonText('weird')).toBe('Refused (weird)');
 	});
 });
+
+describe('wave banner', () => {
+	it('names the bosses and the attacked openings', () => {
+		expect(bossWaveText(4)).toBe('Wave 4');
+		expect(bossWaveText(5)).toBe('Wave 5 · a Behemoth is coming');
+		expect(bossWaveText(10)).toBe('Wave 10 · 2 Behemoths are coming');
+		expect(joinNames(['a', 'b', 'c'])).toBe('a, b and c');
+		const name = (i: number) => INFO.openings[i]!.name;
+		expect(attackText([0], 8, name)).toBe(` · from the ${INFO.openings[0]!.name}`);
+		expect(attackText([0, 2], 8, name)).toBe(` · from the ${INFO.openings[0]!.name} and ${INFO.openings[2]!.name}`);
+		expect(attackText([0, 1, 2, 3], 8, name)).toBe(' · from 4 openings');
+		expect(attackText([0, 1, 2, 3, 4, 5, 6, 7], 8, name)).toBe(' · from every side');
+		expect(attackText(undefined, 8, name)).toBe('');
+	});
+});
+

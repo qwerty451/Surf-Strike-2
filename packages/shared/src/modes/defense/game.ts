@@ -81,6 +81,7 @@ import {
 	ZD_WEAPONS,
 	ZD_ZOMBIES,
 	zdAliveCap,
+	zdAttackOpenings,
 	zdSpawnInterval,
 	zdTurretCost,
 	zdTurretRefund,
@@ -191,7 +192,7 @@ type SpawnReason = 'game' | 'join' | 'respawn';
 export type ZdPadOp = 'build' | 'upgrade' | 'sell';
 
 export type ZdEvent =
-	| { e: 'phase'; phase: ZdPhase; wave: number; round: number }
+	| { e: 'phase'; phase: ZdPhase; wave: number; round: number; /** Wave start: the openings this wave attacks. */ from?: number[] }
 	/** Teleport `id` (new game, join, respawn) with its hp. */
 	| { e: 'spawn'; id: number; x: number; y: number; z: number; yaw: number; hp: number; reason: SpawnReason }
 	/** To the shooter: hit marker. */
@@ -399,6 +400,8 @@ export interface DefenseGameOptions {
 	spawnIntervalScale?: number;
 	/** Tests: tear time factors by wave instead of ZD_EARLY_TEAR ([] = none). */
 	earlyTear?: readonly number[];
+	/** Tests: openings a wave attacks instead of zdAttackOpenings (0 = every opening, spawns from every zone). */
+	attackOpenings?: (wave: number, total: number) => number;
 	/** Server: looser fire/reload timing (ZD_FIRE_TOLERANCE, ZD_RELOAD_TOLERANCE). */
 	lenient?: boolean;
 	/** Tests: start gold instead of ZD_GOLD.start. */
@@ -457,6 +460,7 @@ export class DefenseGame {
 	private readonly maxZombies: number;
 	private readonly spawnScale: number;
 	private readonly earlyTear: readonly number[];
+	private readonly attackCount: (wave: number, total: number) => number;
 	private readonly lenient: boolean;
 	private readonly startGold: number;
 	private readonly plan: ((wave: number, players: number) => ZdZombieKind[]) | null;
@@ -464,6 +468,11 @@ export class DefenseGame {
 	private readonly spawns: Spawn[];
 	/** Spawn zones sorted by angle around the base (spawning walks round them). */
 	private readonly zoneOrder: number[];
+	/** Openings sorted by their angle around the base. */
+	private readonly openingOrder: number[];
+	/** Openings this wave's zombies attack, and the spawn zones that feed them (spawn order). */
+	private attackOps: number[] = [];
+	private waveZones: number[] = [];
 	/** Link key → opening index, for links between an opening's outside and inside nodes. */
 	private readonly openingLinks = new Map<string, number>();
 	private queue: ZdZombieKind[] = [];
@@ -492,6 +501,7 @@ export class DefenseGame {
 		this.maxZombies = opts.maxZombies ?? ZD_MAX_ZOMBIES;
 		this.spawnScale = opts.spawnIntervalScale ?? 1;
 		this.earlyTear = opts.earlyTear ?? ZD_EARLY_TEAR;
+		this.attackCount = opts.attackOpenings ?? zdAttackOpenings;
 		this.lenient = opts.lenient ?? false;
 		this.startGold = opts.startGold ?? ZD_GOLD.start;
 		this.plan = opts.plan ?? null;
@@ -531,6 +541,11 @@ export class DefenseGame {
 			return Math.atan2((z.min.y + z.max.y) / 2 - cy, (z.min.x + z.max.x) / 2 - cx);
 		};
 		const order = info.spawnZones.map((_, i) => i).sort((a, b) => angle(a) - angle(b));
+		const openingAngle = (i: number) => {
+			const o = info.openings[i]!;
+			return Math.atan2((o.min.y + o.max.y) / 2 - cy, (o.min.x + o.max.x) / 2 - cx);
+		};
+		this.openingOrder = info.openings.map((_, i) => i).sort((a, b) => openingAngle(a) - openingAngle(b));
 		// Opposite sides in turn: 0, n/2, 1, n/2+1, ...
 		const half = Math.ceil(order.length / 2);
 		this.zoneOrder = [];
@@ -1077,6 +1092,8 @@ export class DefenseGame {
 		this.round++;
 		this.wave = 0;
 		this.kills = 0;
+		this.attackOps = [];
+		this.waveZones = [];
 		this.gameStartedAt = now;
 		this.zombies.clear();
 		this.queue = [];
@@ -1131,10 +1148,40 @@ export class DefenseGame {
 		const n = Math.max(1, living.length);
 		this.queue = this.plan ? this.plan(this.wave, n) : zdWavePlan(this.wave, n, this.rng);
 		this.waveCount = this.queue.length;
-		this.zoneCursor = Math.floor(this.rng() * Math.max(1, this.zoneOrder.length));
+		this.pickAttack();
+		this.zoneCursor = Math.floor(this.rng() * Math.max(1, this.waveZones.length));
 		this.nextSpawnAt = this.simTime + 1000;
 		for (const p of this.players.values()) p.ready = false;
-		this.pending.push({ e: 'phase', phase: 'wave', wave: this.wave, round: this.round });
+		this.pending.push({ e: 'phase', phase: 'wave', wave: this.wave, round: this.round, from: [...this.attackOps] });
+	}
+
+	/**
+	 * The openings this wave attacks (zdAttackOpenings, evenly spread round the
+	 * base from a random start) and, for each, the spawn zone nearest to it.
+	 */
+	private pickAttack(): void {
+		const total = this.openingOrder.length;
+		const n = Math.min(total, this.attackCount(this.wave, total));
+		this.attackOps = [];
+		this.waveZones = [];
+		if (n <= 0) return;
+		const start = Math.floor(this.rng() * total);
+		for (let k = 0; k < n; k++) this.attackOps.push(this.openingOrder[(start + Math.round((k * total) / n)) % total]!);
+		const zones = new Set<number>();
+		for (const i of this.attackOps) {
+			const dist = this.openings[i]!.dist;
+			let best = -1;
+			for (const [zi, zone] of this.info.spawnZones.entries()) {
+				if (Number.isFinite(dist[zone.node]!) && (best < 0 || dist[zone.node]! < dist[this.info.spawnZones[best]!.node]!)) best = zi;
+			}
+			if (best >= 0) zones.add(best);
+		}
+		this.waveZones = zones.size > 0 ? [...zones] : [...this.zoneOrder];
+	}
+
+	/** Spawn zone order for this wave (all zones before the first wave and in tests without openings). */
+	private spawnOrder(): number[] {
+		return this.waveZones.length > 0 ? this.waveZones : this.zoneOrder;
 	}
 
 	private clearWave(now: number): void {
@@ -1258,8 +1305,9 @@ export class DefenseGame {
 		this.nextSpawnAt = due + zdSpawnInterval(players, this.wave) * this.spawnScale;
 		if (this.zombies.size >= Math.min(this.maxZombies, zdAliveCap(this.wave, players)) || living === 0) return;
 		const zones = this.info.spawnZones;
-		for (let tries = 0; tries < zones.length; tries++) {
-			const zi = this.zoneOrder[this.zoneCursor++ % this.zoneOrder.length]!;
+		const order = this.spawnOrder();
+		for (let tries = 0; tries < Math.max(zones.length, order.length); tries++) {
+			const zi = order[this.zoneCursor++ % order.length]!;
 			const zone = zones[zi]!;
 			const x = zone.min.x + 16 + this.rng() * Math.max(0, zone.max.x - zone.min.x - 32);
 			const y = zone.min.y + 16 + this.rng() * Math.max(0, zone.max.y - zone.min.y - 32);
@@ -1314,8 +1362,9 @@ export class DefenseGame {
 	/** Put a stalled zombie back at a spawn zone, heading for an opening again. */
 	private respawnStalled(z: DefenseZombie): void {
 		const zones = this.info.spawnZones;
-		for (let tries = 0; tries < zones.length; tries++) {
-			const zone = zones[this.zoneOrder[this.zoneCursor++ % this.zoneOrder.length]!]!;
+		const order = this.spawnOrder();
+		for (let tries = 0; tries < Math.max(zones.length, order.length); tries++) {
+			const zone = zones[order[this.zoneCursor++ % order.length]!]!;
 			const pos = { x: (zone.min.x + zone.max.x) / 2, y: (zone.min.y + zone.max.y) / 2, z: zone.min.z + 0.25 };
 			if (this.world.trace(pos, pos, HULL_MIN, HULL_MAX).startsolid) continue;
 			Object.assign(z.body.origin, pos);
@@ -1353,11 +1402,18 @@ export class DefenseGame {
 
 	/** Pick the opening to attack: shortest walk, fewer zombies already there, open ones preferred. */
 	private chooseOpening(z: DefenseZombie, node: number): number {
+		const best = this.chooseOpeningOf(z, node, true);
+		return best >= 0 ? best : this.chooseOpeningOf(z, node, false);
+	}
+
+	private chooseOpeningOf(z: DefenseZombie, node: number, waveOnly: boolean): number {
 		const crowd = new Array<number>(this.openings.length).fill(0);
 		for (const q of this.zombies.values()) if (q !== z && q.opening >= 0 && q.state !== 'inside') crowd[q.opening]!++;
 		let best = -1;
 		let bestCost = Infinity;
 		for (const [i, o] of this.openings.entries()) {
+			// Only this wave's openings (and any that are already broken open).
+			if (waveOnly && this.attackOps.length > 0 && o.planks > 0 && !this.attackOps.includes(i)) continue;
 			const d = o.dist[node]!;
 			if (!Number.isFinite(d)) continue;
 			const cost = d + 180 * crowd[i]! - (o.planks === 0 ? 500 : 0) + this.rng() * 120;

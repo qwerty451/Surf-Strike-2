@@ -20,6 +20,7 @@ import {
 	ZD_ZOMBIES,
 	zdHpScale,
 	zdAliveCap,
+	zdAttackOpenings,
 	zdBossCount,
 	zdIsBossWave,
 	ZD_SPAWN_MIN_MS,
@@ -57,6 +58,7 @@ function setup(opts: Partial<DefenseGameOptions> = {}, players: number[] = [1]) 
 		endSecs: 2,
 		plan: () => [],
 		earlyTear: [],
+		attackOpenings: () => 0,
 		...opts
 	});
 	const pos = new Map<number, Vec3>();
@@ -801,3 +803,27 @@ describe('tuning', () => {
 	});
 });
 
+describe('attacked openings', () => {
+	it('one opening in wave 1, one more every 2 waves, at most all', () => {
+		expect([1, 2, 3, 4, 5, 6, 7, 20].map((w) => zdAttackOpenings(w, 8))).toEqual([1, 2, 2, 3, 3, 4, 4, 8]);
+		expect(zdAttackOpenings(20, 4)).toBe(4);
+	});
+
+	it('wave 1 zombies all go for the one announced opening; wave 2 announces two', () => {
+		const s = setup({ plan: () => Array<ZdZombieKind>(6).fill('walker'), spawnIntervalScale: 0.2, attackOpenings: zdAttackOpenings });
+		toWave(s);
+		const from = of(s.events, 'phase').at(-1)!.from!;
+		expect(from).toHaveLength(1);
+		s.run(4000);
+		const targets = new Set([...s.g.zombies.values()].map((z) => z.opening).filter((o) => o >= 0));
+		expect(s.g.zombies.size).toBeGreaterThan(3);
+		expect([...targets]).toEqual(from);
+		for (const z of [...s.g.zombies.values()]) s.g.zombies.delete(z.id);
+		s.run(12_000);
+		s.g.act(1, { a: 'ready' }, s.now());
+		s.run(STEP);
+		const w2 = of(s.events, 'phase').at(-1)!;
+		expect(w2).toMatchObject({ phase: 'wave', wave: 2 });
+		expect(new Set(w2.from)).toHaveProperty('size', 2);
+	});
+});
