@@ -74,8 +74,6 @@ export interface ClientModeHost {
 	readonly selfId: number;
 	/** The spectated player (not in free-fly), else me: whose role the HUD shows. */
 	readonly viewId: number;
-	/** A map vote is open. */
-	readonly voteOpen: boolean;
 	cvar(name: string): number;
 	myName(): string;
 	/** Name of any player, me included. */

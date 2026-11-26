@@ -18,9 +18,7 @@ import type {
 	HudStateShape,
 	InfectedView,
 	MapListEntry,
-	RtvRequestView,
 	TagView,
-	VoteView,
 	ZombiesView
 } from './contract.js';
 
@@ -32,7 +30,6 @@ export class HudState implements HudStateShape {
 
 	mapId = $state('');
 	mapTitle = $state('');
-	mapTimeLeft = $state(0);
 	gameMode = $state<GameModeId>('surf');
 	modeFamily = $state<ModeFamily>('race');
 	tag = $state.raw<TagView | null>(null);
@@ -40,7 +37,7 @@ export class HudState implements HudStateShape {
 	infected = $state.raw<InfectedView | null>(null);
 	hns = $state.raw<HnsView | null>(null);
 	maps = $state.raw<MapListEntry[]>([]);
-	canChangeMap = $state(true);
+	lobbies = $state.raw<Readonly<Record<string, number>> | null>(null);
 
 	speed = $state(0);
 	speedTrend = $state<'up' | 'down' | 'flat'>('flat');
@@ -74,9 +71,6 @@ export class HudState implements HudStateShape {
 
 	chat = $state.raw<ChatLine[]>([]);
 	chatOpen = $state(false);
-	vote = $state.raw<VoteView | null>(null);
-	rtvRequest = $state.raw<RtvRequestView | null>(null);
-	rtvCooldown = $state.raw<{ until: number; reason: 'declined' | 'mapStart' } | null>(null);
 	scoreboardOpen = $state(false);
 	scoreboard = $state.raw<ScoreRow[]>([]);
 	richest = $state.raw<readonly RichEntry[]>([]);

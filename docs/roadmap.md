@@ -16,7 +16,7 @@ Progress (2026-11-21): milestones 0–10 implemented with unit tests; 11 (produc
 | 7 | Server and netcode | Game server, protocol, remote-player interpolation, join/leave, 32-player cap, solo fallback and reconnect |
 | 8 | Hosting | `pnpm host` launches server + `cloudflared` and registers the URL; `/api/server` on Vercel with the Runtime Cache and `HOST_SECRET` |
 | 9 | Multiplayer features | Run validation, SQLite PBs and top-10, chat and commands, Tab scoreboard, spectate |
-| 10 | Rotation and voting | 15-minute map timer, vote panel, extend, `!rtv`, map change countdown (online and solo) |
+| 10 | Rotation and voting | 15-minute map timer, vote panel, extend, `!rtv`, map change countdown (online and solo). Replaced later by one lobby per map and a server browser ([gameplay.md](gameplay.md#lobbies)) |
 | 11 | Deploy and polish | Vercel production deploy, playtest with friends, tune cvars and maps |
 
 ## Out of scope

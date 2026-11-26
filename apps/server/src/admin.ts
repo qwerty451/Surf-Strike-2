@@ -5,9 +5,8 @@
  * username (case-insensitive, ADMIN_USERNAMES), never by display name and
  * never by anything the client claims. Every `admin` message is re-checked.
  *
- * - Map enable/disable (`map_settings`): disabled maps never come up in votes,
- *   `!rtv`, random picks or the lone-player Change map; at least one map stays
- *   enabled. An admin can still force any map.
+ * - Map enable/disable (`map_settings`): nobody but admins can join the lobby
+ *   of a disabled map; players already in it stay. At least one map stays enabled.
  * - Bans (`bans`), permanent or with an expiry: account bans (plus the player key of a connected target)
  *   and guest bans (player key, plus the client IP when known). Banned
  *   connections get `banned` and close code 4009. Admins cannot be banned.
@@ -17,7 +16,7 @@
 import type { IncomingMessage } from 'node:http';
 import { isIP } from 'node:net';
 import type { AdminAction, AdminState, MapDef, ServerMessage } from '@surf/shared';
-import { ADMIN_COINS_MAX, ADMIN_EXTEND, formatTenths, getCosmetic, mapTitle, MAX_BAN_REASON, sanitizeText, usernameKey } from '@surf/shared';
+import { ADMIN_COINS_MAX, formatTenths, getCosmetic, mapTitle, MAX_BAN_REASON, sanitizeText, usernameKey } from '@surf/shared';
 import { AttemptLimiter } from './auth.ts';
 import type { BanRow, Db } from './db.ts';
 
@@ -81,6 +80,8 @@ export interface AdminClient {
 	ip: string | null;
 	admin: boolean;
 	helloed: boolean;
+	/** Map whose lobby the client is in (null before hello). */
+	mapId?: string | null;
 }
 
 export interface AdminHost<C extends AdminClient> {
@@ -91,10 +92,6 @@ export interface AdminHost<C extends AdminClient> {
 	broadcast(msg: ServerMessage): void;
 	system(text: string): void;
 	log(msg: string): void;
-	/** Immediate map change (MapRotation.forceMap + the mapChange broadcast). */
-	forceMap(mapId: string): boolean;
-	/** Extend the current map; null on success, else the reason. */
-	extend(seconds: number): string | null;
 	/** Change an account's balance (Economy.adjust); null = no such account. */
 	adjustCoins(accountId: number, amount: number | null): { delta: number; balance: number } | null;
 	/** Give an item to a logged-in client; false when it is already owned. */
@@ -205,6 +202,7 @@ export class AdminController<C extends AdminClient> {
 				...(c.accountId !== null ? { account: c.name } : {}),
 				guest: c.accountId === null,
 				admin: c.admin,
+				...(c.mapId ? { map: c.mapId } : {}),
 				...(c.accountId !== null
 					? {
 							coins: this.host.db.accountStats(c.accountId).pointsBalance,
@@ -278,12 +276,6 @@ export class AdminController<C extends AdminClient> {
 					break;
 				case 'takeItem':
 					r = this.takeItem(c, a.targetId, a.item);
-					break;
-				case 'forceMap':
-					r = this.forceMap(c, a.mapId);
-					break;
-				case 'extend':
-					r = this.extend(c);
 					break;
 				case 'listBans':
 					r = { ok: true };
@@ -433,22 +425,5 @@ export class AdminController<C extends AdminClient> {
 		if (!this.host.takeItem(target, item.id)) return { ok: false, error: `${target.name} does not own ${item.name}.` };
 		this.audit(c, 'take-item', `account ${target.name}`, item.id);
 		return { ok: true, changed: true, message: `Removed ${item.name} from ${target.name}.` };
-	}
-
-	private forceMap(c: C, mapId: unknown): Result {
-		const map = this.map(mapId);
-		if (!map) return { ok: false, error: 'Unknown map.' };
-		this.audit(c, 'force-map', map.id);
-		this.host.system(`${c.name} (admin) changed the map.`);
-		if (!this.host.forceMap(map.id)) return { ok: false, error: 'Unknown map.' };
-		return { ok: true, changed: true, message: `Changed to ${mapTitle(map)}.` };
-	}
-
-	private extend(c: C): Result {
-		const err = this.host.extend(ADMIN_EXTEND);
-		if (err) return { ok: false, error: err };
-		this.audit(c, 'extend', null, `${ADMIN_EXTEND / 60} min`);
-		this.host.system(`${c.name} (admin) extended the map by ${ADMIN_EXTEND / 60} minutes.`);
-		return { ok: true, message: `Extended by ${ADMIN_EXTEND / 60} minutes.` };
 	}
 }

@@ -173,12 +173,9 @@ describe('InfectedMode', () => {
 		expect(s.host.send).toHaveBeenLastCalledWith({ type: 'placeBeacon' });
 	});
 
-	it('number keys swap weapons, or go to an open map vote', () => {
+	it('number keys swap weapons', () => {
 		const s = setup();
 		s.phase('playing');
-		s.host.voteOpen = true;
-		expect(s.mode.slot(2, s.now)).toBe(false);
-		s.host.voteOpen = false;
 		expect(s.mode.slot(2, s.now)).toBe(true);
 		expect(s.host.send).toHaveBeenCalledExactlyOnceWith({ type: 'loadout', weapon: 'pistol' });
 	});

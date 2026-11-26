@@ -8,8 +8,10 @@ import {
 	isAdminTab,
 	parseAdminCoins,
 	mapSelectable,
-	mapMenuState,
-	mapRowPickable,
+	busyMaps,
+	lobbyPlayers,
+	playersLabel,
+	totalPlayers,
 	clampCvar,
 	cvarDefault,
 	difficultyRank,
@@ -183,31 +185,28 @@ describe('admin menu helpers', () => {
 	});
 });
 
-describe('mapMenuState', () => {
-	const base = { canChangeMap: false, spectating: false, voteOpen: false, requestOpen: false, cooldown: null };
-	it('alone or solo: instant change, disabled maps for admins only', () => {
-		const st = mapMenuState({ ...base, canChangeMap: true, cooldown: { seconds: 30, reason: 'declined' } });
-		expect(st).toEqual({ mode: 'change', blocked: false, notice: null });
-		expect(mapRowPickable({}, true, false, st)).toBe(true);
-		expect(mapRowPickable({ disabled: true }, false, false, st)).toBe(false);
-		expect(mapRowPickable({ disabled: true }, false, true, st)).toBe(true);
+describe('server browser', () => {
+	const list: MapListEntry[] = [
+		{ id: 'surf_a', title: 'Alpha', kind: 'surf', difficulty: 'easy' },
+		{ id: 'surf_b', title: 'Bravo', kind: 'surf', difficulty: 'hard' },
+		{ id: 'tag_c', title: 'Charlie', kind: 'tag', difficulty: 'easy' },
+		{ id: 'zm_d', title: 'Delta', kind: 'zombies', difficulty: 'easy' }
+	];
+	it('counts players per lobby; missing, bad and offline counts are 0', () => {
+		const counts = { surf_a: 2, tag_c: 5, zm_d: -1, nope: 3 };
+		expect(lobbyPlayers(counts, 'surf_a')).toBe(2);
+		expect(lobbyPlayers(counts, 'surf_b')).toBe(0);
+		expect(lobbyPlayers(counts, 'zm_d')).toBe(0);
+		expect(lobbyPlayers(null, 'surf_a')).toBe(0);
+		expect(totalPlayers(counts)).toBe(10);
+		expect(totalPlayers(null)).toBe(0);
 	});
-	it('others online: rows request a vote, except current and disabled maps', () => {
-		const st = mapMenuState(base);
-		expect(st.mode).toBe('request');
-		expect(st.blocked).toBe(false);
-		expect(mapRowPickable({}, false, false, st)).toBe(true);
-		expect(mapRowPickable({}, true, false, st)).toBe(false);
-		expect(mapRowPickable({ disabled: true }, false, true, st)).toBe(false);
+	it('playing now: busiest first, then by title; empty and unknown maps left out', () => {
+		expect(busyMaps(list, { surf_a: 2, tag_c: 5, nope: 9 }).map((m) => m.id)).toEqual(['tag_c', 'surf_a']);
+		expect(busyMaps(list, { surf_b: 1, surf_a: 1 }).map((m) => m.id)).toEqual(['surf_a', 'surf_b']);
+		expect(busyMaps(list, null)).toEqual([]);
 	});
-	it('blocked with the reason and remaining time', () => {
-		const st = mapMenuState({ ...base, cooldown: { seconds: 45, reason: 'declined' } });
-		expect(st).toEqual({ mode: 'request', blocked: true, notice: 'Map vote declined — try again in 45 s.' });
-		expect(mapRowPickable({}, false, false, st)).toBe(false);
-		expect(mapMenuState({ ...base, cooldown: { seconds: 12, reason: 'mapStart' } }).notice).toBe('Map vote requests open in 12 s.');
-		expect(mapMenuState({ ...base, voteOpen: true }).notice).toBe('A map vote is in progress.');
-		expect(mapMenuState({ ...base, requestOpen: true }).blocked).toBe(true);
-		expect(mapMenuState({ ...base, spectating: true }).notice).toContain('Spectators');
-		expect(mapMenuState({ ...base, cooldown: { seconds: 0, reason: 'declined' } }).blocked).toBe(false);
+	it('labels', () => {
+		expect([0, 1, 4].map(playersLabel)).toEqual(['Empty', '1 player', '4 players']);
 	});
 });

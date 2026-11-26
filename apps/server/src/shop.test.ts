@@ -310,7 +310,7 @@ describe('shop on the server', () => {
 		const second = new TestClient(server.port);
 		clients.push(second);
 		await second.open();
-		second.send({ type: 'hello', playerId: crypto.randomUUID(), name: 'y', version: 1, token });
+		second.send({ type: 'hello', playerId: crypto.randomUUID(), name: 'y', version: 2, token });
 		for (const x of [c, second]) x.send({ type: 'shopBuy', item: 'bottom_cargo' });
 		await second.waitFor('shopResult');
 		assert.equal(server.db.accountStats(accountId).pointsBalance, PRICE * 4);

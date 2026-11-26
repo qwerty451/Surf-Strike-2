@@ -11,7 +11,7 @@ Every map belongs to one gamemode: its `MapDef.kind` (the field keeps its old na
 | `infected` | infected | Infected with throwing knives, see [Infected](#infected) | `INFECTED_CVARS` | 2 | Score, Kills, Streak, Deaths, Status, Ping |
 | `hns` | hns | Hide and seek with knives; found hiders become seekers, see [Hide and seek](#hide-and-seek) | `HNS_CVARS` | 2 | Role, Finds, Survived, Ping |
 
-The map rotation, vote, `!rtv`, chat, spectating and lobby are the same in every mode. The rotation mixes maps of all modes, so a vote can move the lobby from a surf map to a tag map.
+Lobbies, chat and spectating are the same in every mode. Every map has its own lobby, so every mode can be played at the same time ([architecture.md](architecture.md#lobbies)).
 
 ## Framework
 
@@ -36,7 +36,7 @@ apps/web/src/lib/game/modes/
 ```
 
 - **Registry.** `GAME_MODES[id]` gives a mode's `label`, `family` (`race` or its own), `cvars` profile, `minPlayers` and `score` (see [Score display](#score-display)). `mapCvars(map)` is the mode profile plus the map's `cvars` overrides; the server sends it in `welcome` and `mapChange`.
-- **Server.** The lobby has no mode logic. It owns one `ServerMode` per map and replaces it on map change. It forwards these calls: `join` (after `welcome`/`mapChange`), `leave`, `spectate`, `state` (each state packet), `zone`, `command` (`!top`, `!pb`), `scoreRows`, `records` and `tick`. `tick` runs at `MODE_TICK_HZ` (32 Hz).
+- **Server.** The lobby has no mode logic. Each map's lobby (room) owns one `ServerMode`, created when its first player joins and disposed when the last one leaves; `players()` and `broadcast` reach that room only. It forwards these calls: `join` (after `welcome`/`mapChange`), `leave`, `spectate`, `state` (each state packet), `zone`, `command` (`!top`, `!pb`), `scoreRows`, `records` and `tick`. `tick` runs at `MODE_TICK_HZ` (32 Hz).
 - **Client.** `game.ts` has no mode branches either (records, PBs and the stage count of race maps are still there). It owns one `ClientMode` per map (`modes/types.ts`) and replaces it on a map change, and on a disconnect unless the mode has `offline()` (a race run goes on, tag goes back to free roam). It asks the mode for the physics cvars of a tick (or none: no movement), the state packet's status, the camera effects, the looks of remote players and the solo row; it forwards buttons, number keys, `R`, `!r`, the mode's server messages and binary frames; `tick` runs after the movement of every tick and `frame` once per frame, where the mode publishes its HUD view. Race modes run `RunTracker` every tick. In tag, hide and seek and infected without a round, teleport zones respawn the player at a spawn of the mode. The race HUD (timer, splits) shows in race modes only. `hud.gameMode`, `hud.modeFamily` and the mode's own HUD field drive the UI. The scoreboard and the score panel render `GAME_MODES[mode].score`.
 - **Protocol.** These changes are additive. `welcome` and `mapChange` carry `mode`. Non-race modes send `modeState` messages; race modes never do. `ScoreRow` has optional mode fields (`score`, `it`, `kills`, `deaths`) and optional account totals (`pointsTotal`, `playtimeSecs`, `coins`), which the lobby adds to every mode's rows. `Status` has new `Tagger` and `Runner` values.
 
@@ -162,7 +162,7 @@ Mode id `zombies` (family `coop`), label "Zombie Run" (the id, map ids, protocol
 
 ### Weapons
 
-One weapon per life, picked with **1-4** while the loadout window is open (countdown, and 15 s after a (re)spawn); a map vote keeps 1-4 while it is open. Mouse1 fires (`+attack`), **R reloads** (in Zombie Run only; `!r` restarts the round in solo, online rounds restart by themselves), mouse2 toggles the sniper scope. Damage is in zombie HP (8); **any headshot kills**. Movement speed is the weapon's (CS-style `sv_maxspeed`).
+One weapon per life, picked with **1-4** while the loadout window is open (countdown, and 15 s after a (re)spawn). Mouse1 fires (`+attack`), **R reloads** (in Zombie Run only; `!r` restarts the round in solo, online rounds restart by themselves), mouse2 toggles the sniper scope. Damage is in zombie HP (8); **any headshot kills**. Movement speed is the weapon's (CS-style `sv_maxspeed`).
 
 | Key | Weapon | Body hits to kill | Move speed | Fire | Magazine / reserve | Reload | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -249,5 +249,4 @@ CS:GO hide and seek was never an official mode; every community server ran its o
 - Positions are client-authoritative as in every mode: snapshots still carry every player's position, so a modified client could show hiders through walls. Server-side visibility culling is not done.
 - Sounds are real CC0 recordings (CREDITS.md): the knife swing (your own, or another seeker's within 1024 units, quieter with distance), the knife hit (for the finder and the found hider), and the existing gavel for the seeker release. The cash bag's appearance reuses the zone bell; no coin recording is sourced, so the pickup is silent.
 - No spectating while found (found hiders play on as seekers); spectating works as in every mode.
-- Map votes give hns no reserved slot (`VOTE_MAP_SLOTS` covers surf/bhop/tag/zombies); hns maps fill free slots like any map.
 

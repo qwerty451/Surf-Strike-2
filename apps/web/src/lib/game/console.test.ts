@@ -73,11 +73,10 @@ function makeCtx() {
 		openChat: () => void calls.push('chat'),
 		toggleConsole: () => void calls.push('console'),
 		say: (t) => void calls.push(`say:${t}`),
-		vote: (n) => void calls.push(`vote:${n}`),
+		slot: (n) => void calls.push(`slot:${n}`),
 		spectate: (q) => void calls.push(`spec:${q}`),
 		restart: () => void calls.push('restart'),
 		back: () => void calls.push('back'),
-		rtv: () => void calls.push('rtv'),
 		changeMap: (id) => void calls.push(`map:${id}`),
 		mapIds: () => ['surf_aurora', 'surf_ember', 'bhop_meadow'],
 		connect: (u) => void calls.push(`connect:${u}`),
@@ -129,8 +128,8 @@ describe('console commands', () => {
 	});
 	it('runs game commands', () => {
 		const { con, calls } = makeCtx();
-		con.exec('map surf_ember; vote 2; spectate bob; connect example.com; say hi there');
-		expect(calls).toEqual(['map:surf_ember', 'vote:2', 'spec:bob', 'connect:example.com', 'say:hi there']);
+		con.exec('map surf_ember; slot 2; vote 3; spectate bob; connect example.com; say hi there');
+		expect(calls).toEqual(['map:surf_ember', 'slot:2', 'slot:3', 'spec:bob', 'connect:example.com', 'say:hi there']);
 	});
 	it('history skips consecutive duplicates', () => {
 		const { con } = makeCtx();

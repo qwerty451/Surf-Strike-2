@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import type { MapDef } from '@surf/shared';
-import { PROTOCOL_VERSION, RTV_BLOCK, TICK_RATE } from '@surf/shared';
+import { PROTOCOL_VERSION, TICK_RATE } from '@surf/shared';
 import { clientIp, parseAdminUsernames } from './admin.ts';
 import { Db } from './db.ts';
 import { Lobby } from './lobby.ts';
@@ -43,7 +43,6 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 	const dbPath = opts.dbPath ?? (process.env.DB_PATH || DEFAULT_DB_PATH);
 	const db = new Db(dbPath);
 	const lobby = new Lobby({
-		...devRotationOverride(),
 		...opts,
 		maps,
 		db,
@@ -66,7 +65,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 					tickRate: TICK_RATE,
 					map: lobby.currentMap.id,
 					mode: lobby.currentMap.kind,
-					players: lobby.playerCount
+					players: lobby.playerCount,
+					lobbies: lobby.lobbyCounts()
 				})
 			);
 			return;
@@ -102,17 +102,6 @@ export async function startServer(opts: ServerOptions = {}): Promise<GameServer>
 				});
 			})
 	};
-}
-
-/**
- * Dev/QA only: MAP_DURATION_OVERRIDE=<seconds> shortens each map (and the RTV
- * lockout to a quarter of it) so votes can be tested quickly. Ignored when
- * NODE_ENV=production.
- */
-export function devRotationOverride(env: NodeJS.ProcessEnv = process.env): Pick<LobbyOptions, 'mapDuration' | 'rtvBlock'> {
-	const secs = Number(env.MAP_DURATION_OVERRIDE);
-	if (env.NODE_ENV === 'production' || !env.MAP_DURATION_OVERRIDE || !Number.isFinite(secs) || secs <= 0) return {};
-	return { mapDuration: secs, rtvBlock: Math.min(RTV_BLOCK, secs / 4) };
 }
 
 /** Load apps/server/.env if present (Node's built-in loader). */

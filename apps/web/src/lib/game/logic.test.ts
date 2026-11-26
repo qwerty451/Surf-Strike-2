@@ -5,7 +5,7 @@ import { FixedStep } from './loop.js';
 import { loadSoloPb, saveSoloPb, splitDelta } from './records.js';
 import { cycleTarget, findTargetByName, specTargets } from './spectate.js';
 import { memoryStore } from './storage.js';
-import { routeVoteKey, voteLabel } from './vote.js';
+import { mapLabel } from './map-label.js';
 import { horizontalFov, verticalFovFromHorizontal43 } from '../render/fov.js';
 
 describe('fov', () => {
@@ -43,6 +43,8 @@ describe('chat commands', () => {
 		expect(parseChatCommand('!spec  bob ')).toEqual({ kind: 'spec', target: 'bob' });
 		expect(parseChatCommand('!name New Name')).toEqual({ kind: 'name', name: 'New Name' });
 		expect(parseChatCommand('!wat x')).toEqual({ kind: 'unknown', name: 'wat', args: 'x' });
+		expect(parseChatCommand('!map  ember ')).toEqual({ kind: 'map', name: 'ember' });
+		expect(parseChatCommand('!rtv')).toEqual({ kind: 'unknown', name: 'rtv', args: '' });
 	});
 });
 
@@ -94,37 +96,14 @@ describe('spectate targets', () => {
 	});
 });
 
-describe('vote labels', () => {
-	it('labels maps and extend', () => {
-		expect(voteLabel({ kind: 'extend' })).toBe('Extend 10 min');
-		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Title', kind: 'bhop' }))).toBe('Bhop · Title');
-		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Quay', kind: 'tag' }))).toBe('Tag · Quay');
-		expect(voteLabel({ kind: 'map', mapId: 'hns_lido' })).toBe('Hide and Seek · Lido Bay (Large)');
-		expect(voteLabel({ kind: 'map', mapId: 'hns_lido_m' })).toBe('Hide and Seek · Lido Bay (Medium)');
-		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Lab', kind: 'zombies' }))).toBe('Zombie Run · Lab');
-		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => ({ title: 'Outpost', kind: 'infected' }))).toBe('Infected · Outpost');
-		expect(voteLabel({ kind: 'map', mapId: 'x' }, () => undefined)).toBe('x');
-	});
-});
-
-describe('vote key routing', () => {
-	const none = { mapVoteOptions: 0, rtvRequestOpen: false };
-	it('map vote open: 1-8 vote, ahead of binds', () => {
-		const s = { mapVoteOptions: 8, rtvRequestOpen: false };
-		for (let k = 1; k <= 8; k++) expect(routeVoteKey(String(k), s)).toEqual({ kind: 'mapVote', option: k });
-		expect(routeVoteKey('9', s)).toBeNull();
-		expect(routeVoteKey('w', s)).toBeNull();
-		// Fewer options: higher keys are still swallowed (no weapon switch mid-vote).
-		expect(routeVoteKey('6', { mapVoteOptions: 4, rtvRequestOpen: false })).toEqual({ kind: 'mapVote', option: 6 });
-	});
-	it('rtv request open: 1 = yes, 2 = no, other keys keep their binds', () => {
-		const s = { mapVoteOptions: 0, rtvRequestOpen: true };
-		expect(routeVoteKey('1', s)).toEqual({ kind: 'rtv', yes: true });
-		expect(routeVoteKey('2', s)).toEqual({ kind: 'rtv', yes: false });
-		expect(routeVoteKey('3', s)).toBeNull();
-		expect(routeVoteKey('4', s)).toBeNull();
-	});
-	it('nothing open: binds run (zombies weapon slots)', () => {
-		for (const k of ['1', '2', '3', '4', '5']) expect(routeVoteKey(k, none)).toBeNull();
+describe('map labels', () => {
+	it('labels maps with their gamemode', () => {
+		expect(mapLabel('x', () => ({ title: 'Title', kind: 'bhop' }))).toBe('Bhop · Title');
+		expect(mapLabel('x', () => ({ title: 'Quay', kind: 'tag' }))).toBe('Tag · Quay');
+		expect(mapLabel('hns_lido')).toBe('Hide and Seek · Lido Bay (Large)');
+		expect(mapLabel('hns_lido_m')).toBe('Hide and Seek · Lido Bay (Medium)');
+		expect(mapLabel('x', () => ({ title: 'Lab', kind: 'zombies' }))).toBe('Zombie Run · Lab');
+		expect(mapLabel('x', () => ({ title: 'Outpost', kind: 'infected' }))).toBe('Infected · Outpost');
+		expect(mapLabel('x', () => undefined)).toBe('x');
 	});
 });

@@ -81,53 +81,37 @@ export function filterMaps(maps: readonly MapListEntry[], query: string): MapLis
 	});
 }
 
-/** A Change map row can be picked: enabled maps, or any map for admins. */
+/** A server browser row can be picked: enabled maps, or any map for admins. */
 export function mapSelectable(m: Pick<MapListEntry, 'disabled'>, admin: boolean): boolean {
 	return admin || !m.disabled;
 }
 
-/** Change map list state (docs/ui.md#esc-menu): instant change, or RTV request with others online. */
-export interface MapMenuState {
-	/** 'change': switch at once (solo / alone); 'request': a pick starts an RTV request nominating the map. */
-	mode: 'change' | 'request';
-	/** Requests not possible right now (rows read-only). */
-	blocked: boolean;
-	/** Line above the list (null: none). */
-	notice: string | null;
+/** Players in a map's lobby; 0 when nobody plays it or offline. */
+export function lobbyPlayers(counts: Readonly<Record<string, number>> | null, id: string): number {
+	const n = counts?.[id];
+	return typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-export function mapMenuState(i: {
-	canChangeMap: boolean;
-	spectating: boolean;
-	/** A map vote is open or its change countdown runs. */
-	voteOpen: boolean;
-	requestOpen: boolean;
-	/** Seconds until a request may start, with why (null: now). */
-	cooldown: { seconds: number; reason: 'declined' | 'mapStart' } | null;
-}): MapMenuState {
-	if (i.canChangeMap) return { mode: 'change', blocked: false, notice: null };
-	const blocked = (notice: string): MapMenuState => ({ mode: 'request', blocked: true, notice });
-	if (i.spectating) return blocked('Spectators cannot request a map vote.');
-	if (i.voteOpen) return blocked('A map vote is in progress.');
-	if (i.requestOpen) return blocked('A map vote request is open: press 1 = yes, 2 = no.');
-	if (i.cooldown && i.cooldown.seconds > 0) {
-		return blocked(
-			i.cooldown.reason === 'declined'
-				? `Map vote declined — try again in ${i.cooldown.seconds} s.`
-				: `Map vote requests open in ${i.cooldown.seconds} s.`
-		);
-	}
-	return {
-		mode: 'request',
-		blocked: false,
-		notice: 'Others are online: picking a map requests a map vote, with that map as an option.'
-	};
+/** Everyone online, summed over the lobbies. */
+export function totalPlayers(counts: Readonly<Record<string, number>> | null): number {
+	let n = 0;
+	for (const id of Object.keys(counts ?? {})) n += lobbyPlayers(counts, id);
+	return n;
 }
 
-/** A row can be clicked in this state (request mode: not current, not disabled, not blocked). */
-export function mapRowPickable(m: Pick<MapListEntry, 'disabled'>, current: boolean, admin: boolean, st: MapMenuState): boolean {
-	if (st.mode === 'change') return mapSelectable(m, admin);
-	return !st.blocked && !m.disabled && !current;
+/**
+ * The server browser's "Playing now" list (docs/ui.md#server-browser): the
+ * maps with players, busiest first, then by title. Unknown ids are left out.
+ */
+export function busyMaps(maps: readonly MapListEntry[], counts: Readonly<Record<string, number>> | null): MapListEntry[] {
+	return maps
+		.filter((m) => lobbyPlayers(counts, m.id) > 0)
+		.sort((a, b) => lobbyPlayers(counts, b.id) - lobbyPlayers(counts, a.id) || a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+}
+
+/** "Empty", "1 player", "3 players". */
+export function playersLabel(n: number): string {
+	return n <= 0 ? 'Empty' : n === 1 ? '1 player' : `${n} players`;
 }
 
 export type AdminTabId = 'maps' | 'players' | 'bans' | 'abuse';

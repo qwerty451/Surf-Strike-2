@@ -1,6 +1,6 @@
 # Surf Strike 2 — Design Docs
 
-Browser-based surf and bhop game with Source-engine movement. One shared lobby, no main menu (the page loads straight into a map), four original maps rotating by vote every 15 minutes.
+Browser-based surf and bhop game with Source-engine movement. No main menu (the page loads straight into a map); every map of every gamemode is its own lobby, picked in the server browser (Esc › Servers).
 
 Status: design agreed 2026-11-21. Milestones 0–10 implemented 2026-11-21; milestone 11 (deploy, playtest) pending.
 
@@ -45,7 +45,7 @@ Weapon models: `tools/models/procedural/build.sh [id…]` rebuilds the script-bu
 | --- | --- |
 | [architecture.md](architecture.md) | Hosting, Cloudflare tunnel, server discovery, netcode, repo layout |
 | [physics.md](physics.md) | Source movement port, cvars, collision and traces |
-| [gameplay.md](gameplay.md) | Timer, zones, stages, leaderboards, chat, spectate, map vote, lobby, accounts |
+| [gameplay.md](gameplay.md) | Timer, zones, stages, leaderboards, chat, spectate, lobbies, accounts |
 | [modes.md](modes.md) | Gamemode framework (surf, bhop, tag, infected, Zombie Run, hide and seek), how to add a mode, per-mode rules |
 | [maps.md](maps.md) | Map format and the four map designs |
 | [ui.md](ui.md) | HUD (Infected HUD included), console, cvars, Esc settings, account panel, audio, dev previews |
@@ -61,7 +61,7 @@ Weapon models: `tools/models/procedural/build.sh [id…]` rebuilds the script-bu
 | Client | SvelteKit + Three.js + TypeScript, deployed on Vercel |
 | Game server | Node + `ws` + SQLite, runs on the host's own PC |
 | Public access | `cloudflared` quick tunnel, URL registered to a Vercel API backed by the Vercel Runtime Cache |
-| Offline behaviour | Solo play with a local timer and rotation; auto-reconnects when the server comes up |
+| Offline behaviour | Solo play with a local timer; auto-reconnects when the server comes up |
 | Netcode | Client simulates its own movement; server validates runs and relays state |
 | Physics | CS2 movement: 64 tick with subtick input on a Source `CGameMovement` port, SharpTimer CS2 surf/bhop cvars |
 | Rendering/collision | Three.js; custom convex-brush AABB traces, no physics engine |
@@ -69,10 +69,10 @@ Weapon models: `tools/models/procedural/build.sh [id…]` rebuilds the script-bu
 | Features | Timer, zones, stages, PBs, top-10 leaderboard, chat, score panel, Tab scoreboard with total points and playtime, spectate |
 | Not included | Practice `!saveloc`/`!tele`, weapons outside Zombie Run and infected (and the hide and seek knife), anti-cheat, mobile |
 | Identity | Simple accounts (username + password, no email/verification) in the server's SQLite; only accounts' runs reach the leaderboard. Guests pick a name and play everything without saving runs |
-| Settings | Developer console (`~`) plus an Esc menu (Change map, Settings, Account) |
+| Settings | Developer console (`~`) plus an Esc menu (Servers, Settings, Account) |
 | Admin | Esc › Admin for accounts in `ADMIN_USERNAMES` (default `tim`; by account, never display name): enable/disable maps, force map change, ban/unban (account, guest key + IP, close 4009) |
 | HUD | CS2-era layout and feel, original art, open fonts |
-| Map vote | 15:00 per map; vote at 0:30 left; 3 other maps + "Extend 10 min"; `!rtv` at 60% |
+| Lobbies | One lobby per map, picked in the server browser (Esc › Servers); no rotation, vote or map timer |
 | Maps | original: surf (aurora, ember, skyrend, hadal: all rated easy), bhop (meadow easy, circuit / reliquary / rimefall hard), tag (quayside), Zombie Run (lowtide); themed, stylised |
 | Lobby | 32 players max, no player collision, animated low-poly characters with name tags ([characters.md](characters.md)) |
 | Platform | Desktop browsers, mouse + keyboard, pointer lock |

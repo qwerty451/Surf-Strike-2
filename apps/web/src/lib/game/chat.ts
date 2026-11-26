@@ -2,7 +2,8 @@
 export type ChatCommand =
 	| { kind: 'restart' }
 	| { kind: 'back' }
-	| { kind: 'rtv' }
+	/** `!map [name]`: join that map's lobby (online the server answers; solo it loads). */
+	| { kind: 'map'; name: string }
 	| { kind: 'top' }
 	| { kind: 'pb' }
 	| { kind: 'help' }
@@ -22,8 +23,9 @@ export function parseChatCommand(text: string): ChatCommand | null {
 			return { kind: 'restart' };
 		case 'back':
 			return { kind: 'back' };
-		case 'rtv':
-			return { kind: 'rtv' };
+		case 'map':
+		case 'join':
+			return { kind: 'map', name: args };
 		case 'top':
 			return { kind: 'top' };
 		case 'pb':
@@ -40,4 +42,4 @@ export function parseChatCommand(text: string): ChatCommand | null {
 }
 
 export const CHAT_HELP =
-	'Commands: !r / !restart, !back, !rtv, !top, !pb, !spec [name], !name <new name>, !help';
+	'Commands: !r / !restart, !back, !map [name], !top, !pb, !spec [name], !name <new name>, !help';

@@ -1,13 +1,14 @@
 <script lang="ts">
-	import { formatClock } from '#lib/ui/format.js';
+	import { gameMode, type GameModeId } from '@surf/shared';
 
-	let { mapId, timeLeft }: { mapId: string; timeLeft: number } = $props();
+	/** Top-centre map line: the map of this lobby and its gamemode (docs/ui.md#hud). */
+	let { mapId, mode }: { mapId: string; mode: GameModeId } = $props();
 </script>
 
 <div class="mapinfo ss-panel ss-shadow">
 	<span class="map">{mapId}</span>
 	<span class="dot">·</span>
-	<span class="left ss-num" class:low={timeLeft <= 60}>{formatClock(timeLeft)}</span>
+	<span class="mode">{gameMode(mode).label}</span>
 </div>
 
 <style>
@@ -25,11 +26,7 @@
 	.dot {
 		color: var(--text-faint);
 	}
-	.left {
-		font-weight: 600;
-		font-size: 1.12em;
-	}
-	.low {
-		color: var(--bad);
+	.mode {
+		color: var(--text-dim);
 	}
 </style>

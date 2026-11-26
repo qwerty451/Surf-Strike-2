@@ -30,7 +30,8 @@ export interface CommandContext {
 	openChat(): void;
 	toggleConsole(): void;
 	say(text: string): void;
-	vote(option: number): void;
+	/** Weapon slot n (number keys, console `slot`). */
+	slot(option: number): void;
 	spectate(query: string): void;
 	restart(): void;
 	/** Infected: plant a respawn beacon. Optional: other hosts ignore it. */
@@ -38,7 +39,6 @@ export interface CommandContext {
 	/** Infected: call an earned M.O.A.B.. Optional: other hosts ignore it. */
 	moab?(): void;
 	back(): void;
-	rtv(): void;
 	changeMap(id: string): void;
 	mapIds(): string[];
 	connect(url: string): void;
@@ -106,19 +106,21 @@ export function registerCommands(con: DevConsole, ctx: CommandContext): void {
 	reg('messagemode', 'Open chat', () => ctx.openChat());
 	reg('say', 'say <text>: send chat', (_a, raw) => ctx.say(raw));
 	reg('toggleconsole', 'Toggle the console', () => ctx.toggleConsole());
-	reg('vote', 'vote <n>: vote in the map vote (1-7), or 1 = yes / 2 = no on an RTV request', (args) => {
+	const slot = (args: string[]) => {
 		const n = Number(args[0]);
-		if (Number.isInteger(n) && n >= 1) ctx.vote(n);
-	});
+		if (Number.isInteger(n) && n >= 1) ctx.slot(n);
+	};
+	reg('slot', 'slot <n>: weapon slot n (armed modes; number keys)', slot);
+	// Old name of `slot` (there are no map votes any more): binds saved before still work.
+	reg('vote', 'vote <n>: same as slot <n>', slot);
 	reg('spectate', 'Toggle spectating; spectate <name>', (_a, raw) => ctx.spectate(raw));
 	reg('restart', 'Back to start, timer reset (!r)', () => ctx.restart());
 	reg('beacon', 'Infected: plant a respawn beacon at your feet (E)', () => ctx.beacon?.());
 	reg('moab', 'Infected: call your earned M.O.A.B. (N)', () => ctx.moab?.());
 	reg('back', 'Back to current stage or checkpoint (!back)', () => ctx.back());
-	reg('rtv', 'Request a map vote (!rtv)', () => ctx.rtv());
 	reg(
 		'map',
-		'map <id>: change map (solo, or online when alone; else an RTV request nominating it)',
+		"map <id>: play that map (online: join its lobby; also Esc › Servers)",
 		(args) => {
 			if (!args[0]) {
 				ctx.print(`Maps: ${ctx.mapIds().join(', ')}`);

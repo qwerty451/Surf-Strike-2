@@ -14,14 +14,13 @@ import {
 } from './zombies-view.js';
 
 describe('zombies weapon keys', () => {
-	it('1-4 vote while a map vote is open, else pick a weapon in the loadout window', () => {
-		expect(slotAction(1, true, true)).toEqual({ kind: 'vote' });
-		expect(slotAction(1, false, true)).toEqual({ kind: 'weapon', weapon: 'lmg' });
-		expect(slotAction(2, false, true)).toEqual({ kind: 'weapon', weapon: 'pistol' });
-		expect(slotAction(3, false, true)).toEqual({ kind: 'weapon', weapon: 'knife' });
-		expect(slotAction(4, false, true)).toEqual({ kind: 'weapon', weapon: 'sniper' });
-		expect(slotAction(2, false, false)).toBeNull(); // window closed
-		expect(slotAction(9, false, true)).toBeNull();
+	it('1-4 pick a weapon in the loadout window', () => {
+		expect(slotAction(1, true)).toEqual({ kind: 'weapon', weapon: 'lmg' });
+		expect(slotAction(2, true)).toEqual({ kind: 'weapon', weapon: 'pistol' });
+		expect(slotAction(3, true)).toEqual({ kind: 'weapon', weapon: 'knife' });
+		expect(slotAction(4, true)).toEqual({ kind: 'weapon', weapon: 'sniper' });
+		expect(slotAction(2, false)).toBeNull(); // window closed
+		expect(slotAction(9, true)).toBeNull();
 	});
 
 	it('loadout choices list the four weapons in key order', () => {

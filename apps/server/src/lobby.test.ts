@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import { FLAG_TELEPORTED, MAP_DURATION, Status, VOTE_AT, VOTE_DURATION, TICK_RATE } from '@surf/shared';
+import { FLAG_TELEPORTED, Status, TICK_RATE } from '@surf/shared';
 import { hashPassword } from './auth.ts';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
@@ -17,6 +17,21 @@ async function join(name: string, playerId?: string) {
 	const c = new TestClient(server.port);
 	clients.push(c);
 	const welcome = await c.hello(name, playerId);
+	return { c, welcome };
+}
+
+/** Close every test client and wait until the server has dropped them. */
+async function closeAll() {
+	for (const c of clients) c.close();
+	clients.length = 0;
+	for (let i = 0; i < 50 && server.lobby.clients.size > 0; i++) await sleep(20);
+	assert.equal(server.lobby.clients.size, 0);
+}
+
+async function joinOn(name: string, map: string) {
+	const c = new TestClient(server.port);
+	clients.push(c);
+	const welcome = await c.hello(name, undefined, undefined, map);
 	return { c, welcome };
 }
 
@@ -82,7 +97,6 @@ describe('lobby', () => {
 		const { c: a, welcome: wa } = await join('Alice');
 		assert.equal(wa.map, 'surf_a');
 		assert.equal(wa.selfId, 1);
-		assert.equal(wa.mapTimeLeft, MAP_DURATION);
 		assert.equal(wa.cvars.sv_maxvelocity, 3500);
 		assert.equal(wa.cvars.sv_airaccelerate, 150);
 		assert.deepEqual(wa.records, { pbTicks: null, pbSplits: null, rank: null, recordTicks: null, recordName: null, top: [] });
@@ -228,119 +242,150 @@ describe('lobby', () => {
 		assert.equal(server.lobby.clients.size, 0);
 	});
 
-	it('vote at 0:30, extend, rtv and map change (fake clock)', async () => {
-		const { c } = await join('Voter');
-		const base = clock - (MAP_DURATION - server.lobby.timeLeft()) * 1000;
-		// Scheduled vote.
-		clock = base + (MAP_DURATION - VOTE_AT) * 1000 + 10;
-		server.lobby.updateRotation();
-		const vs = await c.waitFor('voteStart');
-		assert.equal(vs.rtv, false);
-		assert.equal(vs.options.length, 4);
-		assert.deepEqual(vs.options[3], { kind: 'extend' });
-		assert.equal(vs.options.some((o) => o.kind === 'map' && o.mapId === 'surf_a'), false);
-		await c.waitFor('chat', (m) => m.system === true && m.text.includes('Vote for the next map'));
-		c.send({ type: 'vote', option: 4 });
-		const vu = await c.waitFor('voteUpdate');
-		assert.deepEqual(vu.counts, [0, 0, 0, 1]);
-		clock += VOTE_DURATION * 1000;
-		server.lobby.updateRotation();
-		const ve = await c.waitFor('voteEnd');
-		assert.deepEqual(ve.winner, { kind: 'extend' });
-		const tl = await c.waitFor('timeLeft', (m) => m.mapTimeLeft > 600);
-		assert.ok(tl.mapTimeLeft >= 600 && tl.mapTimeLeft <= 610);
-
-		// RTV (solo voter => opens at once, no extend option).
-		await sleep(1100);
-		let n = c.messages.length;
-		c.send({ type: 'chat', text: '!rtv' });
-		const rv = await c.waitFor('voteStart', () => true, n);
-		assert.equal(rv.rtv, true);
-		assert.equal(rv.options.some((o) => o.kind === 'extend'), false);
-		await c.waitFor('chat', (m) => m.system === true && m.text.includes('wants to vote for a new map'), n);
-		c.send({ type: 'vote', option: 2 });
-		await c.waitFor('voteUpdate', (m) => m.counts[1] === 1, n);
-		clock += VOTE_DURATION * 1000;
-		server.lobby.updateRotation();
-		const re = await c.waitFor('voteEnd', () => true, n);
-		assert.deepEqual(re.winner, rv.options[1]);
-		assert.equal(re.countdown, 5);
-		clock += 5000;
-		server.lobby.updateRotation();
-		const mc = await c.waitFor('mapChange', () => true, n);
-		assert.equal(mc.map, (rv.options[1] as { mapId: string }).mapId);
-		assert.equal(mc.mapTimeLeft, MAP_DURATION);
-		assert.equal(mc.cvars.sv_maxvelocity, 3500);
-		assert.equal(mc.records.pbTicks, null);
-		assert.equal(server.lobby.currentMap.id, mc.map);
-
-		// rtv blocked for the first 20 seconds.
-		await sleep(1100);
-		n = c.messages.length;
-		c.send({ type: 'chat', text: '!rtv' });
-		const blocked = await c.waitFor('chat', (m) => m.system === true && m.text.includes('available in 20 s'), n);
-		assert.ok(blocked);
-		clock += 20_000;
-		await sleep(1100);
-		n = c.messages.length;
-		c.send({ type: 'chat', text: '!rtv' });
-		await c.waitFor('voteStart', () => true, n);
-		c.close();
-		await c.until(() => c.closed);
-		await sleep(100);
+	it('hello picks the lobby: the named map, else the default map', async () => {
+		await closeAll();
+		const { c: a, welcome: wa } = await joinOn('OnB', 'surf_b');
+		assert.equal(wa.map, 'surf_b');
+		assert.deepEqual(
+			wa.players.map((p) => p.id),
+			[wa.selfId],
+			'only the players of surf_b'
+		);
+		const lb = await a.waitFor('lobbies');
+		assert.equal(lb.counts.surf_b, 1);
+		const { welcome: wn } = await joinOn('Nowhere', 'no_such_map');
+		assert.equal(wn.map, 'surf_a');
+		const { welcome: wd } = await join('Default');
+		assert.equal(wd.map, 'surf_a');
+		assert.equal(server.lobby.mapOf(wa.selfId), 'surf_b');
+		assert.deepEqual(server.lobby.lobbyCounts(), { surf_a: 2, surf_b: 1 });
 	});
 
-	it('changeMap: allowed for a lone player, rejected with others connected', async () => {
-		const { c } = await join('Loner');
-		const from = server.lobby.currentMap.id;
-		const target = MAPS.find((m) => m.id !== from)!.id;
-		// Open an rtv vote first: the switch must cancel it.
-		let n = c.messages.length;
-		if (!server.lobby.rotation.vote) {
-			clock += 60_000;
-			c.send({ type: 'rtv' });
-			await c.waitFor('voteStart', () => true, n);
-		}
-		assert.ok(server.lobby.rotation.vote);
+	it('lobbies are separate: join/leave, chat, snapshots, scoreboard and spectating stay in one map', async () => {
+		await closeAll();
+		const { c: a, welcome: wa } = await joinOn('IsoA', 'surf_a');
+		const { c: b, welcome: wb } = await joinOn('IsoB', 'surf_b');
+		const { c: a2 } = await joinOn('IsoA2', 'surf_a');
+		// a sees a2 join, b does not.
+		await a.waitFor('join', (m) => m.player.name === 'IsoA2');
+		await sleep(100);
+		assert.equal(b.messages.some((m) => m.type === 'join' && m.player.name === 'IsoA2'), false);
+		// Chat stays in the lobby.
+		a.send({ type: 'chat', text: 'hello alpha' });
+		await a2.waitFor('chat', (m) => m.text === 'hello alpha');
+		await sleep(100);
+		assert.equal(b.messages.some((m) => m.type === 'chat' && m.text === 'hello alpha'), false);
+		// Snapshots: b never gets a's state, a2 does.
+		a.sendState(netState(5, 777.5));
+		b.sendState(netState(5, 888.5));
+		await a2.until(() => a2.snapshots.flat().find((e) => e.id === wa.selfId && e.x === 777.5));
+		await b.until(() => b.snapshots.flat().find((e) => e.id === wb.selfId && e.x === 888.5));
+		await sleep(150);
+		assert.equal(b.snapshots.flat().some((e) => e.id === wa.selfId), false);
+		assert.equal(a.snapshots.flat().some((e) => e.id === wb.selfId), false);
+		// Scoreboard rows are the lobby's.
+		const sb = await b.waitFor('scoreboard', (m) => m.rows.some((r) => r.name === 'IsoB'), b.messages.length, 2500);
+		assert.deepEqual(
+			sb.rows.map((r) => r.name),
+			['IsoB']
+		);
+		// Spectating a player of another lobby is not possible.
+		b.send({ type: 'spectate', targetId: wa.selfId });
+		const sp = await b.waitFor('spectating', (m) => m.id === wb.selfId);
+		assert.equal(sp.targetId, null);
+		b.send({ type: 'spectate', targetId: null });
+		await b.waitFor('spectating', (m) => m.id === wb.selfId && !m.spectating);
+		for (const c of [a, b, a2]) c.close();
+		await sleep(150);
+	});
 
-		n = c.messages.length;
-		c.send({ type: 'changeMap', mapId: 'nope' });
-		await c.waitFor('chat', (m) => m.system === true && m.text.includes('Unknown map'), n);
-		assert.equal(server.lobby.currentMap.id, from);
+	it('changeMap moves one player to another lobby; others stay', async () => {
+		await closeAll();
+		const { c: a, welcome: wa } = await joinOn('MoveA', 'surf_a');
+		const { c: stay } = await joinOn('StayA', 'surf_a');
+		const { c: c, welcome: wc } = await joinOn('OnC', 'surf_c');
+		await a.waitFor('join', (m) => m.player.name === 'StayA');
 
-		n = c.messages.length;
-		c.send({ type: 'changeMap', mapId: target });
-		const mc = await c.waitFor('mapChange', () => true, n);
-		assert.equal(mc.map, target);
-		assert.equal(mc.mapTimeLeft, MAP_DURATION);
+		let n = a.messages.length;
+		a.send({ type: 'changeMap', mapId: 'nope' });
+		await a.waitFor('chat', (m) => m.system === true && m.text.includes('Unknown map'), n);
+		a.send({ type: 'changeMap', mapId: 'surf_a' });
+		await a.waitFor('chat', (m) => m.system === true && m.text.includes('already playing'), n);
+
+		n = a.messages.length;
+		const ns = stay.messages.length;
+		a.send({ type: 'changeMap', mapId: 'surf_c' });
+		const mc = await a.waitFor('mapChange', () => true, n);
+		assert.equal(mc.map, 'surf_c');
+		assert.equal(mc.mode, 'surf');
 		assert.equal(mc.cvars.sv_maxvelocity, 3500);
 		assert.equal(mc.records.pbTicks, null);
-		assert.equal(server.lobby.currentMap.id, target);
-		assert.equal(server.lobby.rotation.vote, null);
-		assert.equal(server.lobby.rotation.nextMap, null);
+		assert.deepEqual(mc.players.map((p) => p.id).sort(), [wa.selfId, wc.selfId].sort());
+		// The old lobby sees a leave, the new one a join; nobody else changes map.
+		await stay.waitFor('leave', (m) => m.id === wa.selfId, ns);
+		await stay.waitFor('chat', (m) => m.system === true && m.text.includes('went to'), ns);
+		await c.waitFor('join', (m) => m.player.id === wa.selfId);
+		assert.equal(stay.messages.slice(ns).some((m) => m.type === 'mapChange'), false);
+		assert.equal(server.lobby.mapOf(wa.selfId), 'surf_c');
+		// Chat now reaches surf_c, not surf_a.
+		a.send({ type: 'chat', text: 'now on charlie' });
+		await c.waitFor('chat', (m) => m.text === 'now on charlie');
+		await sleep(100);
+		assert.equal(stay.messages.some((m) => m.type === 'chat' && m.text === 'now on charlie'), false);
+		// !map lists the busy lobbies and joins by title.
+		n = a.messages.length;
+		a.send({ type: 'chat', text: '!map' });
+		await a.waitFor('chat', (m) => m.system === true && m.text.startsWith('Playing now:') && m.text.includes('Charlie (2)'), n);
+		await sleep(1100); // chat: 2 messages a second
+		a.send({ type: 'chat', text: '!map delt' });
+		const md = await a.waitFor('mapChange', () => true, n);
+		assert.equal(md.map, 'surf_d');
+		assert.deepEqual(md.players.map((p) => p.id), [wa.selfId]);
+		n = a.messages.length;
+		a.send({ type: 'chat', text: '!rtv' });
+		await a.waitFor('chat', (m) => m.system === true && m.text.includes('no map votes'), n);
+		for (const x of [a, stay, c]) x.close();
+		await sleep(150);
+	});
 
-		// A second client (even a spectator) blocks it.
-		const { c: other } = await join('Other');
-		other.send({ type: 'chat', text: '!spec' });
-		await c.waitFor('spectating', (m) => m.spectating, c.messages.length - 1);
-		n = c.messages.length;
-		c.send({ type: 'changeMap', mapId: from });
-		await c.waitFor('chat', (m) => m.system === true && m.text.includes('starts a map vote request'), n);
-		assert.equal(server.lobby.currentMap.id, target);
-		other.send({ type: 'changeMap', mapId: from });
-		await other.waitFor('chat', (m) => m.system === true && m.text.includes('starts a map vote request'));
-		assert.equal(server.lobby.currentMap.id, target);
+	it('lobbies message: counts per map to everyone when they change', async () => {
+		await closeAll();
+		const { c: a } = await joinOn('CountA', 'surf_a');
+		server.lobby.sendLobbies();
+		const n = a.messages.length;
+		const { c: b } = await joinOn('CountB', 'surf_d');
+		server.lobby.sendLobbies();
+		const lb = await a.waitFor('lobbies', (m) => m.counts.surf_d === 1, n);
+		assert.equal(lb.counts.surf_a, 1);
+		assert.equal(lb.counts.surf_b, undefined, 'empty lobbies are left out');
+		const m = a.messages.length;
+		server.lobby.sendLobbies();
+		await sleep(100);
+		assert.equal(a.messages.slice(m).some((x) => x.type === 'lobbies'), false, 'unchanged counts are not sent again');
+		b.close();
+		await a.until(() => server.lobby.lobbyCounts().surf_d === undefined);
+		server.lobby.sendLobbies();
+		await a.waitFor('lobbies', (x) => x.counts.surf_d === undefined, m);
+		a.close();
+		await sleep(150);
+	});
 
-		// Alone again: allowed.
-		other.close();
-		await c.waitFor('leave', () => true, n);
-		n = c.messages.length;
-		c.send({ type: 'changeMap', mapId: from });
-		await c.waitFor('mapChange', (m) => m.map === from, n);
-		assert.equal(server.lobby.currentMap.id, from);
+	it('an empty lobby drops its mode and starts fresh', async () => {
+		await closeAll();
+		const { c } = await joinOn('Fresh', 'surf_b');
+		const mode = server.lobby.modeFor('surf_b');
+		assert.ok(mode);
+		c.send({ type: 'changeMap', mapId: 'surf_c' });
+		await c.waitFor('mapChange');
+		assert.equal(server.lobby.modeFor('surf_b'), null);
+		assert.ok(server.lobby.modeFor('surf_c'));
+		c.send({ type: 'changeMap', mapId: 'surf_b' });
+		await c.waitFor('mapChange', (m) => m.map === 'surf_b');
+		assert.notEqual(server.lobby.modeFor('surf_b'), mode);
 		c.close();
 		await c.until(() => c.closed);
-		await sleep(100);
+		await sleep(150);
+		assert.equal(server.lobby.modeFor('surf_b'), null);
 	});
 
 	it('duplicate player id replaces the old connection', async () => {

@@ -27,7 +27,7 @@ Estimates for the race modes and Zombie Run, playtime included:
 
 | Mode | Average player | Very good player | From |
 | --- | --- | --- | --- |
-| Surf and bhop | 75–90 | 110–155 without changing the map early, up to about 190 with `!rtv` | Clean runs of 30–50 s (easy surf), 45 s (bhop), 55 s and 89 s (hard surf), 15-minute map sessions |
+| Surf and bhop | 75–90 | 110–155 without changing the map early, up to about 190 hopping between maps | Clean runs of 30–50 s (easy surf), 45 s (bhop), 55 s and 89 s (hard surf), 15-minute map sessions |
 | Zombie Run | 105–145 | 155–175 | 16–18 rounds per hour, nearly all won; average 22–35 per hour, mostly lost at gate 2–4 (bots with human aim errors in the real rules) |
 
 Both ranges are at multiplier ×1.0. In the multiplayer modes a full lobby pays up to twice as much.
@@ -61,7 +61,7 @@ Only validated runs count.
 | Hard bhop | 12 |
 | Hard surf | 15 |
 
-- **Repeats** on the same map within one map session (until the map changes), and within 60 minutes whatever the sessions: 100 %, 50 %, 25 %, then 10 %, rounded up to whole points, so a finish never pays less than 1 (hard maps 2). The hour is there because a lone player can change the map at any time: two hard maps in turn would pay over 600 points per hour.
+- **Repeats** on the same map within one map session (until that map's lobby is empty), and within 60 minutes whatever the sessions: 100 %, 50 %, 25 %, then 10 %, rounded up to whole points, so a finish never pays less than 1 (hard maps 2). The hour is there because a lone player can change the map at any time: two hard maps in turn would pay over 600 points per hour.
 - **First finish ever** of a map: a bonus equal to the finish award. "Ever" means there was no stored run of the account on the map before this one, so maps finished before coins existed do not pay it.
 - **Personal best** beaten: +2 once per map session and at most once per map in 60 minutes, after that +1. The first run is not a PB, an equal time neither.
 - **Server record** beaten: +5 easy, +15 hard. Only when it beats another account's record, at most once per map per account per 24 hours. The first time on a map beats nobody. Of two equal times the older one holds the record.

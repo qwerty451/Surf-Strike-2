@@ -10,7 +10,6 @@ const host = {
 	name: () => '',
 	notice: () => {},
 	teleport: () => {},
-	voteOpen: () => false,
 	sound: () => {},
 	setZoom: () => {},
 	push: () => {}

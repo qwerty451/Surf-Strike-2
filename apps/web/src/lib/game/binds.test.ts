@@ -12,7 +12,7 @@ describe('binds', () => {
 		expect(b.get('ctrl')).toBe('+duck');
 		expect(b.get('y')).toBe('messagemode');
 		expect(b.get('tab')).toBe('+showscores');
-		expect(b.get('3')).toBe('vote 3');
+		expect(b.get('3')).toBe('slot 3');
 		expect(b.get('m')).toBe('spectate');
 		expect(b.get('r')).toBe('restart');
 		expect(b.get('`')).toBe('toggleconsole');

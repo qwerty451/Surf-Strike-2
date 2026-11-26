@@ -323,7 +323,7 @@ describe('what the mode decides', () => {
 		const s = setup();
 		s.frames(60);
 		expect(s.game.hud.scoreboard[0]).toMatchObject({ status: 7, kills: 3, ping: 0 });
-		s.game.vote(1);
+		s.game.slot(1);
 		expect(mode().slot).toHaveBeenCalledExactlyOnceWith(1, clock);
 	});
 

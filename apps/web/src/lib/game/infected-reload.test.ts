@@ -130,7 +130,6 @@ function playing() {
 			name: (pid) => `P${pid}`,
 			notice: () => {},
 			teleport: () => {},
-			voteOpen: () => false,
 			sound: (name, at) => void peer.sounds.push(at ? { name, at: { ...at } } : { name }),
 			setZoom: () => {},
 			push: () => {}
@@ -243,7 +242,6 @@ describe('other players hear a reload', () => {
 				name: () => 'x',
 				notice: () => {},
 				teleport: () => {},
-				voteOpen: () => false,
 				sound: (n) => void sounds.push(n),
 				setZoom: () => {},
 				push: () => {}

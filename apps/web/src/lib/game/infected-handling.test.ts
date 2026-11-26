@@ -148,7 +148,6 @@ function wire(opts: WireOpts = {}) {
 			origin.y = y;
 			origin.z = z;
 		},
-		voteOpen: () => false,
 		sound: (n) => void sounds.push(n),
 		setZoom: () => {},
 		push: () => {}
@@ -281,7 +280,6 @@ function solo(weapon: WeaponId = 'lmg', mag = WEAPONS[weapon].magazine, reserve 
 		name: (id) => `P${id}`,
 		notice: () => {},
 		teleport: () => {},
-		voteOpen: () => false,
 		sound: (n) => void sounds.push(n),
 		setZoom: (f) => void zoom.push(f),
 		push: () => {},

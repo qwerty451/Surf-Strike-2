@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join as pathJoin } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import type { AdminAction } from '@surf/shared';
-import { ADMIN_COINS_MAX, ADMIN_EXTEND, CLOSE_IP_LIMIT, RTV_BLOCK } from '@surf/shared';
+import { ADMIN_COINS_MAX, CLOSE_IP_LIMIT } from '@surf/shared';
 import { clientIp, ipKey, parseAdminUsernames } from './admin.ts';
 import type { GameServer } from './server.ts';
 import { startServer } from './server.ts';
@@ -38,9 +38,9 @@ function client(headers?: Record<string, string>) {
 	return c;
 }
 
-async function join(name: string, opts: { playerId?: string; token?: string; headers?: Record<string, string> } = {}) {
+async function join(name: string, opts: { playerId?: string; token?: string; headers?: Record<string, string>; map?: string } = {}) {
 	const c = client(opts.headers);
-	const welcome = await c.hello(name, opts.playerId, opts.token);
+	const welcome = await c.hello(name, opts.playerId, opts.token, opts.map);
 	return { c, welcome };
 }
 
@@ -60,7 +60,7 @@ async function adminState(c: TestClient, from = 0) {
 async function bannedHello(name: string, opts: { playerId?: string; token?: string; headers?: Record<string, string> } = {}) {
 	const c = client(opts.headers);
 	await c.open();
-	c.send({ type: 'hello', playerId: opts.playerId ?? crypto.randomUUID(), name, version: 1, ...(opts.token ? { token: opts.token } : {}) });
+	c.send({ type: 'hello', playerId: opts.playerId ?? crypto.randomUUID(), name, version: 2, ...(opts.token ? { token: opts.token } : {}) });
 	await c.until(() => c.closed, 3000);
 	return c;
 }
@@ -132,8 +132,7 @@ describe('admin', () => {
 		const self = welcome.players.find((p) => p.id === welcome.selfId)!;
 		assert.equal(self.name, 'Guest-abcd');
 		await c.waitFor('chat', (m) => m.system === true && m.text.includes('belongs to a registered account'));
-		assert.equal((await admin(c, { action: 'forceMap', mapId: 'surf_b' })).ok, false);
-		assert.equal(server.lobby.currentMap.id, 'surf_a', 'non-admin force ignored');
+		assert.equal((await admin(c, { action: 'setMapEnabled', mapId: 'surf_b', enabled: false })).ok, false, 'non-admin ignored');
 
 		const n = c.messages.length;
 		c.send({ type: 'chat', text: '!name TIM' });
@@ -151,7 +150,7 @@ describe('admin', () => {
 		c.close();
 	});
 
-	it('disabled maps leave votes and lone changeMap; the last map cannot be disabled', async () => {
+	it('disabled maps cannot be joined; the last map cannot be disabled', async () => {
 		const { c: watcher } = await join('Watcher');
 		const n = watcher.messages.length;
 		const r = await admin(tim, { action: 'setMapEnabled', mapId: 'surf_b', enabled: false });
@@ -165,13 +164,9 @@ describe('admin', () => {
 		assert.deepEqual(none, { type: 'adminResult', ok: false, error: 'At least one map must stay enabled.' });
 		assert.equal((await admin(tim, { action: 'setMapEnabled', mapId: 'surf_c', enabled: true })).ok, true);
 
-		// rtv vote: surf_b never offered.
-		clock += (RTV_BLOCK + 1) * 1000;
-		const k = watcher.messages.length;
-		tim.send({ type: 'rtv' });
-		watcher.send({ type: 'rtv' });
-		const vs = await watcher.waitFor('voteStart', () => true, k);
-		assert.deepEqual(vs.options, [{ kind: 'map', mapId: 'surf_c' }]);
+		// A non-admin asking for the disabled lobby lands on the default map.
+		const { welcome: wb } = await join('WantsB', { map: 'surf_b' });
+		assert.equal(wb.map, 'surf_a');
 
 		// A newcomer gets the enabled list after welcome.
 		const { c: late } = await join('Late');
@@ -180,29 +175,32 @@ describe('admin', () => {
 		watcher.close();
 	});
 
-	it('force map works for any map, disabled ones too; extend adds time', async () => {
+	it('only admins join a disabled lobby; players already in it stay', async () => {
+		// surf_b is disabled (previous test). An admin can join it; a hello for it works too.
 		const n = tim.messages.length;
-		assert.equal((await admin(tim, { action: 'forceMap', mapId: 'surf_b' })).ok, true);
+		tim.send({ type: 'changeMap', mapId: 'surf_b' });
 		const ch = await tim.waitFor('mapChange', () => true, n);
 		assert.equal(ch.map, 'surf_b');
-		assert.equal(server.lobby.currentMap.id, 'surf_b');
-		assert.equal(server.lobby.rotation.vote, null, 'the rtv vote was cancelled');
-		const before = server.lobby.timeLeft();
-		assert.equal((await admin(tim, { action: 'extend' })).ok, true);
-		assert.equal(server.lobby.timeLeft(), before + ADMIN_EXTEND);
-		assert.equal((await admin(tim, { action: 'forceMap', mapId: 'nope' })).ok, false);
+		const k = tim.messages.length;
+		const st = await admin(tim, { action: 'listBans' });
+		assert.equal(st.ok, true);
+		const state = await adminState(tim, k);
+		assert.equal(state.players.find((p) => p.name === 'Tim')?.map, 'surf_b');
 
-		// Lone non-admin: changeMap to a disabled map is refused.
-		tim.close();
-		await new Promise((r) => setTimeout(r, 100));
+		// A non-admin cannot follow; a non-admin already there stays when it gets disabled.
 		const { c } = await join('Solo');
 		const m = c.messages.length;
 		c.send({ type: 'changeMap', mapId: 'surf_b' });
 		await c.waitFor('chat', (x) => x.system === true && x.text === 'That map is disabled by an admin.', m);
 		c.send({ type: 'changeMap', mapId: 'surf_c' });
 		await c.waitFor('mapChange', (x) => x.map === 'surf_c', m);
+		assert.equal((await admin(tim, { action: 'setMapEnabled', mapId: 'surf_c', enabled: false })).ok, true);
+		await new Promise((r) => setTimeout(r, 100));
+		assert.equal(server.lobby.mapOf(server.lobby.scoreRows('surf_c')[0]!.id), 'surf_c');
+		assert.equal((await admin(tim, { action: 'setMapEnabled', mapId: 'surf_c', enabled: true })).ok, true);
 		c.close();
-		tim = (await join('x', { token: timToken })).c;
+		tim.send({ type: 'changeMap', mapId: 'surf_a' });
+		await tim.waitFor('mapChange', (x) => x.map === 'surf_a', n);
 	});
 
 	it('ban a connected account: kicked with 4009, login and token refused; unban restores', async () => {
@@ -384,7 +382,7 @@ describe('admin', () => {
 			target: string | null;
 		}[];
 		const actions = rows.map((r) => r.action);
-		for (const a of ['disable-map', 'enable-map', 'force-map', 'extend', 'ban', 'unban', 'coins-add', 'coins-subtract', 'coins-reset']) assert.ok(actions.includes(a), a);
+		for (const a of ['disable-map', 'enable-map', 'ban', 'unban', 'coins-add', 'coins-subtract', 'coins-reset']) assert.ok(actions.includes(a), a);
 		assert.ok(rows.every((r) => r.admin_username === 'Tim'));
 		assert.ok(rows.some((r) => r.action === 'ban' && r.target === 'account Bob'));
 	});

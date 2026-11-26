@@ -1,7 +1,7 @@
 /** Shared helpers for server tests (node --test). Not a test file itself. */
 import { WebSocket } from 'ws';
 import type { GhostFrame, MapDef, NetState, ServerMessage, SnapshotEntry, ZombieFrame } from '@surf/shared';
-import { BIN_ZOMBIES, decodeGhostFrame, decodeSnapshot, decodeZombies, encodeState, Status } from '@surf/shared';
+import { BIN_ZOMBIES, decodeGhostFrame, decodeSnapshot, decodeZombies, encodeState, PROTOCOL_VERSION, Status } from '@surf/shared';
 
 /** Staged corridor along +X: start [0,200], stage 2 [1000,1100], end [2000,2100]. */
 export function testMap(id = 'surf_test', title = 'Test'): MapDef {
@@ -157,9 +157,17 @@ export class TestClient {
 		return this.messages.filter((m) => m.type === type) as Extract<ServerMessage, { type: K }>[];
 	}
 
-	async hello(name: string, playerId: string = crypto.randomUUID(), token?: string) {
+	/** `map`: the lobby to ask for (docs/architecture.md#lobbies); none = the server's default map. */
+	async hello(name: string, playerId: string = crypto.randomUUID(), token?: string, map?: string) {
 		await this.open();
-		this.send({ type: 'hello', playerId, name, version: 1, ...(token === undefined ? {} : { token }) });
+		this.send({
+			type: 'hello',
+			playerId,
+			name,
+			version: PROTOCOL_VERSION,
+			...(token === undefined ? {} : { token }),
+			...(map === undefined ? {} : { map })
+		});
 		return this.waitFor('welcome');
 	}
 

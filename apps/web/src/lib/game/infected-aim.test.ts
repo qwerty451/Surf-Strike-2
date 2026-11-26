@@ -93,7 +93,6 @@ function setup(weapon: WeaponId = 'smg', opts: { online?: boolean; team?: 'survi
 		name: (id) => `P${id}`,
 		notice: () => {},
 		teleport: () => {},
-		voteOpen: () => false,
 		sound: (n) => void sounds.push(n),
 		setZoom: (f) => void zoom.push(f),
 		push: () => {},

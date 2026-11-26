@@ -22,9 +22,7 @@ import {
 	mapCvars,
 	modeOf,
 	MAPS,
-	MapRotation,
 	MAX_CHAT,
-	RTV_REQUEST_DURATION,
 	MAX_TICKS_PER_FRAME,
 	HULL_MIN,
 	DUCK_HULL_MAX,
@@ -53,14 +51,13 @@ import {
 	type MapDef,
 	type MapRecordInfo,
 	type NetState,
+	type PlayerInfo,
 	type PlayerState,
-	type RotationEvent,
 	type ScoreRow,
 	type ServerMessage,
 	type SnapshotEntry,
 	type UserCmd,
-	type Vec3,
-	type VoteOption
+	type Vec3
 } from '@surf/shared';
 import { GameAudio } from '../audio/audio.js';
 import { GameFullscreen } from '../input/fullscreen.js';
@@ -105,14 +102,13 @@ import type { ClientMode, ClientModeHost, ModeView } from './modes/types.js';
 import { loadSoloPb, mergeRecordsPush, recordFields, saveSoloPb, type LocalPb } from './records.js';
 import { cycleTarget, findTargetByName, specTargets } from './spectate.js';
 import { browserStore, STORAGE_KEYS, type KeyValueStore } from './storage.js';
-import { mapLabel, routeVoteKey, voteLabel } from './vote.js';
+import { findMap, mapLabel } from './map-label.js';
 
 const FREEFLY_SPEED = 1000;
 /** Camera of a mode without effects. */
 const NO_VIEW: Readonly<ModeView> = Object.freeze({ zoomFov: 0, zoomT: 0, kickPitch: 0, kickYaw: 0, kickRoll: 0 });
 const MAX_CHAT_LINES = 100;
 const MAX_CONSOLE_LINES = 500;
-const SOLO_VOTER = 'local';
 /** Scoreboard row id of the local player offline. */
 const SOLO_ROW_ID = 0;
 const FULL_HOLDOFF_MS = 60_000;
@@ -241,7 +237,6 @@ export class Game implements CommandContext {
 	/** Scratch pose for `players.setPose`. */
 	private readonly avatarPose = emptyPose();
 	private records: MapRecordInfo | null = null;
-	private mapEndsAt = 0;
 	private netState: NetState = {
 		tick: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, pitch: 0, yaw: 0, flags: 0, status: Status.Idle, stage: 0, runTicks: 0
 	};
@@ -252,7 +247,6 @@ export class Game implements CommandContext {
 	private bannedSecs: number | null = null;
 
 	// Solo
-	private rotation: MapRotation | null = null;
 	private soloPb: LocalPb | null = null;
 
 	// Ghosts (docs/gameplay.md#ghosts): played by the race mode
@@ -260,12 +254,10 @@ export class Game implements CommandContext {
 	private ghostWarned = false;
 	/** What the record ghost's holder wears. */
 	private ghostLook: { map: string; loadout: Loadout } | null = null;
-	private lastRotationUpdate = 0;
 	private lastSoloBoard = 0;
 
-	// Spectate and vote
+	// Spectate
 	private spec: Spectate | null = null;
-	private voteOptions: VoteOption[] = [];
 
 	// HUD bookkeeping
 	private fpsFrames = 0;
@@ -322,7 +314,6 @@ export class Game implements CommandContext {
 		this.hud.fullscreenSupported = this.fullscreen.supported;
 
 		this.loadMap(initialMapId(typeof location !== 'undefined' ? location.search : '', this.store.get(STORAGE_KEYS.lastMap)));
-		this.startSoloRotation();
 
 		this.conn = new Connection(
 			{
@@ -363,9 +354,7 @@ export class Game implements CommandContext {
 			closeChat: () => this.closeChat(),
 			toggleConsole: () => this.toggleConsole(),
 			closeSettings: () => this.closeSettings(),
-			vote: (o) => this.vote(o),
 			changeMap: (id) => this.changeMap(id),
-			rtvVote: (yes) => this.rtvVote(yes),
 			minimizeBan: (minimized) => this.minimizeBan(minimized),
 			shopBuy: (item) => this.shopRequest({ type: 'shopBuy', item }),
 			boxOpen: () => this.shopRequest({ type: 'boxOpen' }),
@@ -551,23 +540,17 @@ export class Game implements CommandContext {
 		h.recordTop = f.recordTop;
 	}
 
-	/** Online and the only connected client (spectators count). */
-	private aloneOnline(): boolean {
-		return this.mode === 'online' && this.remotes.size === 0;
-	}
-
+	/**
+	 * Play another map. Online: join that map's lobby (docs/architecture.md#lobbies);
+	 * the server answers with mapChange and the players there. Solo: load it.
+	 */
 	changeMap(id: string): void {
 		if (this.mode === 'online') {
 			if (!MAP_IDS.includes(id)) {
 				this.print(`Unknown map "${id}". Maps: ${MAP_IDS.join(', ')}`, 'error');
 				return;
 			}
-			if (!this.aloneOnline()) {
-				// Others here: the pick nominates the map in an RTV request.
-				this.requestRtv(id);
-				return;
-			}
-			// The server switches everyone (just us) and replies with mapChange.
+			if (id === this.map.id) return;
 			this.send({ type: 'changeMap', mapId: id });
 			return;
 		}
@@ -576,17 +559,6 @@ export class Game implements CommandContext {
 			return;
 		}
 		this.loadMap(id);
-		this.startSoloRotation();
-		this.hud.vote = null;
-		this.hud.rtvRequest = null;
-		this.hud.rtvCooldown = null;
-	}
-
-	private startSoloRotation(): void {
-		const ids = this.mapIds();
-		this.rotation = ids.includes(this.map.id)
-			? new MapRotation({ maps: ids, current: this.map.id, now: performance.now(), kindOf: (id) => getMap(id)?.kind ?? '' })
-			: null;
 	}
 
 	// -----------------------------------------------------------------------
@@ -625,15 +597,6 @@ export class Game implements CommandContext {
 			const shortcut = isBrowserShortcut(name, e);
 			if (shortcut && !this.input.locked && (name === 'w' || name === 't' || name === 'n')) return false;
 			const swallow = shortcut && this.input.locked;
-			// Number keys go to an open map vote (1-7) or RTV request (1/2) instead of their binds.
-			const route = routeVoteKey(name, this.voteKeyState());
-			if (route) {
-				if (!e.repeat) {
-					if (route.kind === 'mapVote') this.castMapVote(route.option);
-					else this.rtvVote(route.yes);
-				}
-				return true;
-			}
 			if (!cmd) return swallow;
 			if (e.repeat) return true;
 			this.pressedKeys.set(name, cmd);
@@ -1032,8 +995,14 @@ export class Game implements CommandContext {
 				return cmd.kind === 'restart' ? this.restart() : this.back();
 			case 'spec':
 				return this.spectate(cmd.target);
-			case 'rtv':
-				return this.rtv();
+			case 'map': {
+				// Online the server finds the map and moves us (or lists the busy lobbies).
+				if (online) return this.send({ type: 'chat', text });
+				const m = findMap(cmd.name);
+				if (!cmd.name) return this.notice('Usage: !map <name>. Or pick a map in Esc › Servers.');
+				if (!m) return this.notice(`No map matching "${cmd.name}".`);
+				return this.changeMap(m.id);
+			}
 			case 'name': {
 				if (this.hud.account) return this.notice(`You're logged in as ${this.hud.account.username}. Log out to play under another name.`);
 				const n = cleanName(cmd.name);
@@ -1088,7 +1057,6 @@ export class Game implements CommandContext {
 			get online() { return game.mode === 'online'; },
 			get selfId() { return game.selfId; },
 			get viewId() { return game.viewId(); },
-			get voteOpen() { return !!game.hud.vote && !game.hud.vote.result; },
 			get ghostStore() { return game.ghostStore; },
 			get ghostLook() { return game.ghostLook; },
 			cvar: (name) => this.cvars.num(name),
@@ -1331,11 +1299,6 @@ export class Game implements CommandContext {
 		let end = now - this.step.accMs - (n - 1) * stepMs;
 		for (let i = 0; i < n; i++, end += stepMs) this.simTick(now, end - stepMs, end);
 
-		if (this.mode === 'solo' && this.rotation && now - this.lastRotationUpdate >= 100) {
-			this.lastRotationUpdate = now;
-			for (const ev of this.rotation.update(now, 1)) this.onRotationEvent(ev, now);
-		}
-
 		const view = this.updateCamera(now);
 		this.updateRemotes(now);
 		this.client.frame(now);
@@ -1480,19 +1443,6 @@ export class Game implements CommandContext {
 			pos.vz = Math.round((src ? src.vz : p.velocity.z) * 100) / 100;
 		}
 
-		let left = 0;
-		if (this.mode === 'online') left = Math.max(0, (this.mapEndsAt - now) / 1000);
-		else if (this.rotation) left = this.rotation.timeLeft(now);
-		const secs = Math.ceil(left);
-		if (h.mapTimeLeft !== secs) h.mapTimeLeft = secs;
-
-		const vote = h.vote;
-		if (vote?.result && now > vote.result.changeAt + 1500) h.vote = null;
-		const req = h.rtvRequest;
-		if (req?.result && now > req.result.at + 2500) h.rtvRequest = null;
-		else if (req && req.canVote === !!this.spec) h.rtvRequest = { ...req, canVote: !this.spec };
-		if (h.rtvCooldown && now >= h.rtvCooldown.until) h.rtvCooldown = null;
-
 		if (this.mode === 'solo' && now - this.lastSoloBoard > 500) this.refreshSoloBoard(now);
 		const selfId = this.mode === 'online' ? this.selfId : SOLO_ROW_ID;
 		if (h.selfId !== selfId) h.selfId = selfId;
@@ -1536,156 +1486,12 @@ export class Game implements CommandContext {
 	}
 
 	// -----------------------------------------------------------------------
-	// Votes and rotation
+	// Number keys
 	// -----------------------------------------------------------------------
 
-	/** Console `vote N` (number keys are routed in onKey via routeVoteKey). */
-	vote(option: number): void {
-		const s = this.voteKeyState();
-		if (s.mapVoteOptions === 0 && s.rtvRequestOpen && (option === 1 || option === 2)) return this.rtvVote(option === 1);
-		// Armed modes: weapon slots, unless a map vote is open.
-		if (this.client.slot?.(option, performance.now())) return;
-		this.castMapVote(option);
-	}
-
-	private voteKeyState(): { mapVoteOptions: number; rtvRequestOpen: boolean } {
-		const v = this.hud.vote;
-		const r = this.hud.rtvRequest;
-		return { mapVoteOptions: v && !v.result ? v.labels.length : 0, rtvRequestOpen: !!r && !r.result };
-	}
-
-	private castMapVote(option: number): void {
-		const v = this.hud.vote;
-		if (!v || v.result || option < 1 || option > v.labels.length) return;
-		if (this.mode === 'online') this.send({ type: 'vote', option });
-		else if (this.rotation) {
-			const now = performance.now();
-			for (const ev of this.rotation.castVote(SOLO_VOTER, option, now)) this.onRotationEvent(ev, now);
-		}
-		if (this.hud.vote && !this.hud.vote.result) this.hud.vote = { ...this.hud.vote, myVote: option };
-	}
-
-	/** `!rtv` / console `rtv`: RTV request without a nominated map. */
-	rtv(): void {
-		this.requestRtv(null);
-	}
-
-	/** Start an RTV request (optionally nominating a map), or agree to the open one. */
-	private requestRtv(mapId: string | null): void {
-		if (this.mode === 'online') {
-			this.send(mapId === null ? { type: 'rtvRequest' } : { type: 'rtvRequest', mapId });
-			return;
-		}
-		if (!this.rotation) return this.notice('Rock the vote is not available on this map.');
-		const now = performance.now();
-		const res = this.rotation.requestRtv(SOLO_VOTER, 1, now, mapId);
-		if (Array.isArray(res)) for (const ev of res) this.onRotationEvent(ev, now);
-		else this.notice(res.error);
-	}
-
-	/** Yes/no on the open RTV request (keys 1 / 2, or the modal buttons). */
-	rtvVote(yes: boolean): void {
-		const r = this.hud.rtvRequest;
-		if (!r || r.result) return;
-		if (!r.canVote) return this.notice('Spectators cannot vote.');
-		const choice = yes ? 'yes' : 'no';
-		if (r.myChoice === choice) return;
-		this.hud.rtvRequest = { ...r, myChoice: choice };
-		if (this.mode === 'online') this.send({ type: 'rtvVote', yes });
-		else if (this.rotation) {
-			const now = performance.now();
-			const res = this.rotation.rtvVote(SOLO_VOTER, yes, 1, now);
-			if (Array.isArray(res)) for (const ev of res) this.onRotationEvent(ev, now);
-		}
-	}
-
-	private onRtvRequest(
-		m: { started: boolean; initiator: string; mapId: string | null; duration: number; yes: number; no: number; needed: number },
-		mine: boolean,
-		now: number
-	): void {
-		const prev = this.hud.rtvRequest;
-		if (m.started) this.audio.voteChime();
-		this.hud.rtvRequest = {
-			initiator: m.initiator,
-			mapLabel: m.mapId ? mapLabel(m.mapId) : null,
-			yes: m.yes,
-			no: m.no,
-			needed: m.needed,
-			endsAt: now + m.duration * 1000,
-			duration: RTV_REQUEST_DURATION,
-			myChoice: m.started ? (mine ? 'yes' : null) : (prev?.myChoice ?? null),
-			canVote: !this.spec,
-			result: null
-		};
-	}
-
-	private onRtvRequestEnd(passed: boolean, cooldown: number, now: number): void {
-		const r = this.hud.rtvRequest;
-		if (r) this.hud.rtvRequest = { ...r, result: { passed, at: now } };
-		if (!passed && cooldown > 0) this.hud.rtvCooldown = { until: now + cooldown * 1000, reason: 'declined' };
-	}
-
-	private onVoteStart(options: VoteOption[], duration: number, rtv: boolean, now: number): void {
-		// The vote panel replaces a passed (or cancelled) RTV request.
-		this.hud.rtvRequest = null;
-		this.voteOptions = options;
-		const labels = options.map((o) => voteLabel(o));
-		this.hud.vote = {
-			labels,
-			counts: options.map(() => 0),
-			endsAt: now + duration * 1000,
-			duration,
-			myVote: null,
-			rtv,
-			result: null
-		};
-		this.audio.voteChime();
-		// Online, the server announces votes in chat itself.
-		if (this.mode === 'solo') this.notice(`${rtv ? 'Rock the vote! ' : ''}Vote for the next map: press 1-${labels.length}.`);
-	}
-
-	private onVoteUpdate(counts: number[]): void {
-		if (this.hud.vote) this.hud.vote = { ...this.hud.vote, counts: [...counts] };
-	}
-
-	private onVoteEnd(winner: VoteOption, countdown: number, now: number): void {
-		const label = voteLabel(winner);
-		const v = this.hud.vote;
-		const base = v ?? {
-			labels: this.voteOptions.map((o) => voteLabel(o)),
-			counts: this.voteOptions.map(() => 0),
-			endsAt: now,
-			duration: 0,
-			myVote: null,
-			rtv: false
-		};
-		this.hud.vote = { ...base, result: { label, changeAt: now + countdown * 1000 } };
-		if (this.mode === 'solo')
-			this.notice(winner.kind === 'extend' ? 'Vote result: map extended.' : `Vote result: ${label}. Changing in ${countdown} s.`);
-	}
-
-	private onRotationEvent(ev: RotationEvent, now: number): void {
-		switch (ev.type) {
-			case 'voteStart':
-				return this.onVoteStart(ev.options, ev.duration, ev.rtv, now);
-			case 'voteUpdate':
-				return this.onVoteUpdate(ev.counts);
-			case 'voteEnd':
-				return this.onVoteEnd(ev.winner, ev.countdown, now);
-			case 'extended':
-				this.notice(`Map extended: ${Math.ceil(ev.timeLeft / 60)} min left.`);
-				return;
-			case 'mapChange':
-				this.hud.vote = null;
-				this.hud.rtvRequest = null;
-				this.loadMap(ev.map);
-				return;
-			case 'rtvRequest':
-				return this.onRtvRequest(ev, ev.initiator === SOLO_VOTER, now);
-			case 'rtvRequestEnd':
-				return this.onRtvRequestEnd(ev.passed, ev.cooldown, now);
-		}
+	/** Console `slot N` (and `vote N`, the old name kept for saved binds): weapon slots in the armed modes. */
+	slot(option: number): void {
+		this.client.slot?.(option, performance.now());
 	}
 
 	// -----------------------------------------------------------------------
@@ -1783,7 +1589,9 @@ export class Game implements CommandContext {
 			playerId: this.playerId,
 			name: this.cvars.str('name'),
 			version: PROTOCOL_VERSION,
-			...(this.helloToken ? { token: this.helloToken } : {})
+			...(this.helloToken ? { token: this.helloToken } : {}),
+			// Join the lobby of the map we are on (docs/architecture.md#lobbies).
+			map: this.map.id
 		});
 	}
 
@@ -1814,7 +1622,6 @@ export class Game implements CommandContext {
 
 	private updatePlayerCount(): void {
 		this.hud.playerCount = this.mode === 'online' ? this.remotes.size + 1 : 1;
-		this.hud.canChangeMap = this.mode === 'solo' || this.aloneOnline();
 	}
 
 	private onMessage(m: ServerMessage): void {
@@ -1869,6 +1676,9 @@ export class Game implements CommandContext {
 			case 'maps':
 				this.applyEnabledMaps(new Set(m.enabled));
 				break;
+			case 'lobbies':
+				this.hud.lobbies = m.counts && typeof m.counts === 'object' ? { ...m.counts } : {};
+				break;
 			case 'adminState': {
 				const { type: _t, ...state } = m;
 				this.hud.adminState = state;
@@ -1894,34 +1704,15 @@ export class Game implements CommandContext {
 				this.records = mergeRecordsPush(this.records, m, this.mode, this.map.id);
 				this.applyRecords();
 				break;
-			case 'voteStart':
-				this.onVoteStart(m.options, m.duration, m.rtv, now);
-				break;
-			case 'voteUpdate':
-				this.onVoteUpdate(m.counts);
-				break;
-			case 'voteEnd':
-				this.onVoteEnd(m.winner, m.countdown, now);
-				break;
-			case 'rtvRequest':
-				this.onRtvRequest(m, m.initiatorId === this.selfId, now);
-				break;
-			case 'rtvRequestEnd':
-				this.onRtvRequestEnd(m.passed, m.cooldown, now);
-				break;
-			case 'rtvCooldown':
-				this.hud.rtvCooldown = { until: now + m.seconds * 1000, reason: m.reason };
-				break;
 			case 'mapChange':
+				// We moved to another map's lobby: its players replace the old ones.
 				if (this.spec) this.leaveSpectate(true);
-				this.hud.vote = null;
-				this.hud.rtvRequest = null;
-				this.hud.rtvCooldown = null;
+				this.setRemotes(m.players);
+				this.hud.scoreboard = [];
+				this.hud.multiplier = null;
 				this.loadMap(m.map, m.cvars, m.records);
-				this.mapEndsAt = now + m.mapTimeLeft * 1000;
-				break;
-			case 'timeLeft':
-				this.mapEndsAt = now + m.mapTimeLeft * 1000;
+				this.updatePlayerCount();
+				this.notice(`Joined ${mapLabel(m.map)} · ${this.hud.playerCount} ${this.hud.playerCount === 1 ? 'player' : 'players'}.`);
 				break;
 			case 'scoreboard':
 				this.hud.scoreboard = m.rows;
@@ -2019,32 +1810,33 @@ export class Game implements CommandContext {
 		if (this.cvars.num('cl_boxnews') !== 0) warmItemPictures(m.selfId);
 		this.fullNotified = false;
 		this.selfId = m.selfId;
-		this.rotation = null;
 		this.spec = null;
-		this.hud.vote = null;
-		this.hud.rtvRequest = null;
-		this.hud.rtvCooldown = null;
-		this.renderer?.players.clear();
-		this.remotes.clear();
 		this.hud.ban = null;
 		this.hud.coins = null;
 		this.hud.multiplier = null;
 		this.hud.shop = null;
 		this.hud.casino = null;
 		this.boxUnseen = false;
-		for (const p of m.players) {
-			if (p.id === m.selfId) continue;
-			this.remote(p.id, p.name).spectating = p.spectating;
-			this.renderer?.players.setLoadout(p.id, sanitizeLoadout(p.loadout));
-		}
+		this.setRemotes(m.players);
 		this.applyWelcomeAccount(m.account);
 		this.loadMap(m.map, m.cvars, m.records);
-		this.mapEndsAt = now + m.mapTimeLeft * 1000;
 		this.hud.online = true;
 		this.hud.connecting = false;
 		this.updatePlayerCount();
 		this.notice(`Connected. Playing ${mapTitle(this.map)} online.`);
 		this.print(`Connected to ${client.url}`);
+	}
+
+	/** The players of the lobby we are in (welcome, mapChange), self excluded. */
+	private setRemotes(players: readonly PlayerInfo[]): void {
+		this.renderer?.players.clear();
+		this.remotes.clear();
+		for (const p of players) {
+			if (p.id === this.selfId) continue;
+			this.remote(p.id, p.name).spectating = p.spectating;
+			this.renderer?.players.setLoadout(p.id, sanitizeLoadout(p.loadout));
+		}
+		this.client.peopleChanged?.();
 	}
 
 	private onSnapshot(entries: SnapshotEntry[], arrival: number): void {
@@ -2105,9 +1897,7 @@ export class Game implements CommandContext {
 		this.selfId = -1;
 		this.spec = null;
 		this.hud.online = false;
-		this.hud.vote = null;
-		this.hud.rtvRequest = null;
-		this.hud.rtvCooldown = null;
+		this.hud.lobbies = null;
 		this.hud.scoreboard = [];
 		this.hud.richest = [];
 		this.hud.modeState = null;
@@ -2124,7 +1914,6 @@ export class Game implements CommandContext {
 		this.applyRecords();
 		if (this.client.offline) this.client.offline();
 		else this.startMode();
-		this.startSoloRotation();
 		this.updatePlayerCount();
 		if (code !== 4002 && code !== 4009 && code !== CLOSE_IP_LIMIT) this.notice('Disconnected from server. Playing solo; reconnecting automatically.');
 	}

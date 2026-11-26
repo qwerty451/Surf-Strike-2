@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parseCommand } from './commands.ts';
-import { devRotationOverride } from './server.ts';
 import { parseTunnelUrl, publishUrl, readHostEnv } from './tunnel.ts';
 
 describe('parseTunnelUrl', () => {
@@ -65,20 +64,13 @@ describe('parseCommand', () => {
 	it('parses commands', () => {
 		assert.equal(parseCommand('hello'), null);
 		assert.deepEqual(parseCommand('!RTV'), { cmd: 'rtv' });
+		assert.deepEqual(parseCommand('!map  ember '), { cmd: 'map', name: 'ember' });
+		assert.deepEqual(parseCommand('!join'), { cmd: 'map', name: '' });
 		assert.deepEqual(parseCommand('!spec  bob smith '), { cmd: 'spec', name: 'bob smith' });
 		assert.deepEqual(parseCommand('!spec'), { cmd: 'spec', name: '' });
 		assert.deepEqual(parseCommand('!name New Name'), { cmd: 'name', name: 'New Name' });
 		assert.deepEqual(parseCommand('!r'), { cmd: 'client' });
 		assert.deepEqual(parseCommand('!back'), { cmd: 'client' });
 		assert.deepEqual(parseCommand('!foo'), { cmd: 'unknown', name: 'foo' });
-	});
-});
-
-describe('devRotationOverride', () => {
-	it('shortens the map only outside production', () => {
-		assert.deepEqual(devRotationOverride({ MAP_DURATION_OVERRIDE: '60' }), { mapDuration: 60, rtvBlock: 15 });
-		assert.deepEqual(devRotationOverride({ MAP_DURATION_OVERRIDE: '60', NODE_ENV: 'production' }), {});
-		assert.deepEqual(devRotationOverride({ MAP_DURATION_OVERRIDE: 'abc' }), {});
-		assert.deepEqual(devRotationOverride({}), {});
 	});
 });

@@ -78,7 +78,6 @@ function setup(me: number) {
 		name: (id) => `P${id}`,
 		notice: () => {},
 		teleport: () => {},
-		voteOpen: () => false,
 		sound: (name) => void sounds.push(name),
 		setZoom: () => {},
 		push: () => {}

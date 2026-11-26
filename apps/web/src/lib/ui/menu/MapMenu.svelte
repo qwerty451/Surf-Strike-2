@@ -2,68 +2,49 @@
 	import type { MapListEntry } from '#lib/game/contract.js';
 	import { mapTitle } from '@surf/shared';
 	import Tabs from '#lib/ui/menu/Tabs.svelte';
-	import { filterMaps, groupMapsByMode, mapMenuState, mapTag, mapRowPickable, modeLabel } from '#lib/ui/menu/menu.js';
+	import { busyMaps, filterMaps, groupMapsByMode, lobbyPlayers, mapSelectable, mapTag, modeLabel, playersLabel, totalPlayers } from '#lib/ui/menu/menu.js';
 
+	/**
+	 * Server browser (docs/ui.md#server-browser): every map is its own lobby.
+	 * Online, a pick joins whoever plays there; offline it loads the map solo.
+	 */
 	let {
 		maps,
 		mapId,
-		canChangeMap,
+		online = false,
+		lobbies = null,
 		admin = false,
-		spectating = false,
-		voteOpen = false,
-		requestOpen = false,
-		rtvCooldown = null,
 		onpick
 	}: {
 		maps: MapListEntry[];
 		mapId: string;
-		/** Solo or alone online: a pick switches at once; otherwise it starts an RTV request. */
-		canChangeMap: boolean;
-		/** Admins may pick maps an admin disabled (instant change only). */
+		online?: boolean;
+		/** Players per map lobby (null offline). */
+		lobbies?: Readonly<Record<string, number>> | null;
+		/** Admins may join lobbies of maps an admin disabled. */
 		admin?: boolean;
-		spectating?: boolean;
-		voteOpen?: boolean;
-		requestOpen?: boolean;
-		rtvCooldown?: { until: number; reason: 'declined' | 'mapStart' } | null;
 		onpick: (id: string) => void;
 	} = $props();
-
-	// Ticks the cooldown countdown while one applies.
-	let now = $state(performance.now());
-	$effect(() => {
-		if (!rtvCooldown) return;
-		now = performance.now();
-		const t = setInterval(() => (now = performance.now()), 250);
-		return () => clearInterval(t);
-	});
-	const menu = $derived(
-		mapMenuState({
-			canChangeMap,
-			spectating,
-			voteOpen,
-			requestOpen,
-			cooldown: rtvCooldown
-				? { seconds: Math.max(0, Math.ceil((rtvCooldown.until - now) / 1000)), reason: rtvCooldown.reason }
-				: null
-		})
-	);
-	const request = $derived(menu.mode === 'request');
 
 	const ALL = '__all';
 	const groups = $derived(groupMapsByMode(maps));
 	const currentMap = $derived(maps.find((m) => m.id === mapId));
-	// Open on the current map's mode; falls back to All when that mode is gone.
+	// Open on All (with Playing now on top); a tab shows one mode.
 	let picked = $state<string | null>(null);
 	const category = $derived.by(() => {
-		const want = picked ?? currentMap?.kind ?? ALL;
+		const want = picked ?? ALL;
 		return want === ALL || groups.some((g) => g.id === want) ? want : ALL;
 	});
 	let query = $state('');
+	const counts = $derived(online ? lobbies : null);
+	const total = $derived(totalPlayers(counts));
+	const modePlayers = (g: { maps: MapListEntry[] }) => g.maps.reduce((n, m) => n + lobbyPlayers(counts, m.id), 0);
 
 	const tabs = $derived([
 		{ id: ALL, label: 'All', count: maps.length },
 		...groups.map((g) => ({ id: g.id, label: g.label, count: g.maps.length }))
 	]);
+	const busy = $derived(category === ALL && !query.trim() ? busyMaps(maps, counts) : []);
 	const shown = $derived(
 		groups
 			.filter((g) => category === ALL || g.id === category)
@@ -73,15 +54,19 @@
 </script>
 
 <header class="head">
-	<h2 id="ss-menu-title">Change map</h2>
+	<h2 id="ss-menu-title">Servers</h2>
 	{#if currentMap}
-		<span class="now">Now playing <strong>{mapTitle(currentMap)}</strong> · {modeLabel(currentMap.kind)}</span>
+		<span class="now">You are on <strong>{mapTitle(currentMap)}</strong> · {modeLabel(currentMap.kind)}</span>
 	{/if}
 </header>
 
-{#if menu.notice}
-	<p class="notice" class:blocked={menu.blocked} role="status">{menu.notice}</p>
-{/if}
+<p class="notice" role="status">
+	{#if online}
+		Every map is its own lobby: pick one to join the players there. <span class="total">{playersLabel(total)} online.</span>
+	{:else}
+		Offline: a pick loads the map solo. Online, every map is its own lobby.
+	{/if}
+</p>
 
 <div class="bar">
 	<Tabs {tabs} selected={category} onselect={(id) => (picked = id)} label="Map categories" idPrefix="ss-maps" />
@@ -95,35 +80,25 @@
 </div>
 
 <div class="body" id="ss-maps-panel" role="tabpanel" aria-labelledby="ss-maps-tab-{category}">
+	{#if busy.length > 0}
+		<section class="group" aria-labelledby="ss-maps-group-busy">
+			<h3 class="group-title ss-label" id="ss-maps-group-busy">Playing now</h3>
+			<ul class="maps">
+				{#each busy as m (m.id)}
+					<li>{@render row(m, true)}</li>
+				{/each}
+			</ul>
+		</section>
+	{/if}
 	{#each shown as g (g.id)}
+		{@const n = modePlayers(g)}
 		<section class="group" aria-labelledby="ss-maps-group-{g.id}">
-			{#if category === ALL}
-				<h3 class="group-title ss-label" id="ss-maps-group-{g.id}">{g.label}</h3>
-			{:else}
-				<h3 class="sr-only" id="ss-maps-group-{g.id}">{g.label}</h3>
-			{/if}
+			<h3 class="group-title ss-label" class:sr-only={category !== ALL} id="ss-maps-group-{g.id}">
+				{g.label}{#if n > 0}<span class="group-count">{` · ${playersLabel(n)}`}</span>{/if}
+			</h3>
 			<ul class="maps">
 				{#each g.maps as m (m.id)}
-					{@const current = m.id === mapId}
-					<li>
-						{#if mapRowPickable(m, current, admin, menu)}
-							<button
-								type="button"
-								class="map"
-								class:current
-								aria-current={current ? 'true' : undefined}
-								title={request ? `Request map vote (${mapTitle(m)})` : undefined}
-								onclick={() => onpick(m.id)}
-							>
-								{@render entry(m, current)}
-								{#if request}<span class="act">Request map vote</span>{/if}
-							</button>
-						{:else}
-							<div class="map readonly" class:current class:off={m.disabled} aria-current={current ? 'true' : undefined}>
-								{@render entry(m, current)}
-							</div>
-						{/if}
-					</li>
+					<li>{@render row(m, false)}</li>
 				{/each}
 			</ul>
 		</section>
@@ -132,11 +107,32 @@
 	{/each}
 </div>
 
-{#snippet entry(m: MapListEntry, current: boolean)}
+{#snippet row(m: MapListEntry, withMode: boolean)}
+	{@const current = m.id === mapId}
+	{@const players = lobbyPlayers(counts, m.id)}
+	{#if !current && mapSelectable(m, admin)}
+		<button
+			type="button"
+			class="map"
+			title={online ? `Join ${mapTitle(m)} (${playersLabel(players).toLowerCase()})` : `Play ${mapTitle(m)} solo`}
+			onclick={() => onpick(m.id)}
+		>
+			{@render entry(m, players, current, withMode)}
+			<span class="act">{online ? 'Join' : 'Play'}</span>
+		</button>
+	{:else}
+		<div class="map readonly" class:current class:off={m.disabled} aria-current={current ? 'true' : undefined}>
+			{@render entry(m, players, current, withMode)}
+		</div>
+	{/if}
+{/snippet}
+
+{#snippet entry(m: MapListEntry, players: number, current: boolean, withMode: boolean)}
 	<span class="title">{m.title}</span>
-	<span class="id">{m.id}</span>
-	{#if current}<span class="tag-now">Current</span>{/if}
+	<span class="id">{withMode ? modeLabel(m.kind) : m.id}</span>
+	{#if current}<span class="tag-now">You are here</span>{/if}
 	{#if m.disabled}<span class="tag-off">Disabled by admin</span>{/if}
+	{#if online}<span class="players ss-num" class:busy={players > 0}>{playersLabel(players)}</span>{/if}
 	{@const tag = mapTag(m)}
 	<span class="diff {tag.cls}">{tag.label}</span>
 {/snippet}
@@ -164,10 +160,24 @@
 	.now strong {
 		color: var(--accent);
 	}
-	.notice.blocked {
-		color: var(--text-dim);
-		background: rgba(255, 255, 255, 0.04);
-		border-color: var(--panel-border-strong);
+	.total {
+		color: var(--text);
+		font-weight: 600;
+	}
+	.group-count {
+		color: var(--good);
+		letter-spacing: 0.08em;
+	}
+	.players {
+		flex-shrink: 0;
+		min-width: 72px;
+		font-size: 12px;
+		text-align: right;
+		color: var(--text-faint);
+	}
+	.players.busy {
+		color: var(--good);
+		font-weight: 600;
 	}
 	.act {
 		flex-shrink: 0;

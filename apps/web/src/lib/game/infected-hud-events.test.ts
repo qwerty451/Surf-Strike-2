@@ -553,7 +553,6 @@ function client() {
 		name: (id) => `P${id}`,
 		notice: () => {},
 		teleport: () => {},
-		voteOpen: () => false,
 		sound: () => {},
 		setZoom: () => {},
 		push: () => {}
@@ -745,7 +744,6 @@ function round(ids: number[], opts: Partial<InfectedGameOptions> = {}) {
 			name: (pid) => `P${pid}`,
 			notice: () => {},
 			teleport: (x, y, z, yaw) => put(id, x, y, z, yaw),
-			voteOpen: () => false,
 			sound: () => {},
 			setZoom: () => {},
 			push: () => {}

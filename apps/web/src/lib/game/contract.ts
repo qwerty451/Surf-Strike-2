@@ -55,36 +55,7 @@ export interface ConsoleLine {
 	kind: 'input' | 'output' | 'error' | 'echo';
 }
 
-export interface VoteView {
-	labels: string[]; // option labels in key order (1..7: up to 6 maps "Surf · Kessler", then extend)
-	counts: number[];
-	endsAt: number; // performance.now() timestamp
-	duration: number; // seconds
-	myVote: number | null; // 1-based
-	rtv: boolean;
-	/** Set after the vote closes: winner label and change time. */
-	result: { label: string; changeAt: number } | null;
-}
-
-/** Open RTV request: the CS2-style modal at the top (docs/ui.md#rtv-request). */
-export interface RtvRequestView {
-	initiator: string;
-	/** Nominated map label ("Surf · Echo"), or null. */
-	mapLabel: string | null;
-	yes: number;
-	no: number;
-	/** Yes votes needed to pass. */
-	needed: number;
-	endsAt: number; // performance.now() timestamp
-	duration: number; // total seconds (countdown bar)
-	myChoice: 'yes' | 'no' | null;
-	/** False for spectators (they see the modal but cannot vote). */
-	canVote: boolean;
-	/** Set when the request closed (shown briefly). */
-	result: { passed: boolean; at: number } | null;
-}
-
-/** A rotation map as listed in the Esc menu's map list (Change map). */
+/** A map as listed in the server browser (Esc menu › Servers). */
 export interface MapListEntry {
 	id: string;
 	title: string;
@@ -92,7 +63,7 @@ export interface MapListEntry {
 	difficulty: string;
 	/** Maps that come in sizes: shown instead of the difficulty (MapDef.size). */
 	size?: 'medium' | 'large';
-	/** Disabled by an admin (online): not in votes, greyed in Change map. */
+	/** Disabled by an admin (online): only admins can join its lobby. */
 	disabled?: boolean;
 }
 
@@ -428,7 +399,6 @@ export interface HudStateShape {
 	// Map
 	mapId: string;
 	mapTitle: string;
-	mapTimeLeft: number; // seconds
 	// Gamemode (docs/modes.md): race HUD (timer, splits, records) only when modeFamily is 'race'.
 	gameMode: GameModeId;
 	modeFamily: ModeFamily;
@@ -436,10 +406,10 @@ export interface HudStateShape {
 	zombies: ZombiesView | null;
 	infected: InfectedView | null;
 	hns: HnsView | null;
-	/** Rotation maps, in rotation order (Esc menu, Change map). */
+	/** Every map, in list order (server browser). */
 	maps: MapListEntry[];
-	/** Solo, or online as the only connected client: the Esc menu may switch maps directly. */
-	canChangeMap: boolean;
+	/** Online: players per map lobby (maps nobody plays are missing); null offline (docs/architecture.md#lobbies). */
+	lobbies: Readonly<Record<string, number>> | null;
 	// Movement
 	speed: number; // horizontal u/s of the local (or spectated) player
 	speedTrend: 'up' | 'down' | 'flat';
@@ -486,10 +456,6 @@ export interface HudStateShape {
 	// Social
 	chat: ChatLine[]; // last 100
 	chatOpen: boolean;
-	vote: VoteView | null;
-	rtvRequest: RtvRequestView | null;
-	/** No RTV request before `until` (performance.now()): decline cooldown or map-start block. */
-	rtvCooldown: { until: number; reason: 'declined' | 'mapStart' } | null;
 	scoreboardOpen: boolean;
 	/** Rows of the Tab scoreboard and the score panel (solo: one row). */
 	scoreboard: ScoreRow[];
@@ -551,14 +517,7 @@ export interface GameApi {
 	closeChat(): void;
 	toggleConsole(): void;
 	closeSettings(): void;
-	/** Cast a vote (1-based). */
-	vote(option: number): void;
-	/** Answer the open RTV request (same as keys 1 / 2). */
-	rtvVote(yes: boolean): void;
-	/**
-	 * Pick a map from Change map: switch at once (solo, or online when alone;
-	 * see canChangeMap), otherwise start an RTV request nominating it.
-	 */
+	/** Server browser pick: online, join that map's lobby (docs/architecture.md#lobbies); solo, load the map. */
 	changeMap(id: string): void;
 	/** Ban screen: play solo until the ban is over (or go back to the screen). */
 	minimizeBan(minimized: boolean): void;
@@ -596,8 +555,7 @@ export interface GameApi {
  *
  * Keyboard/mouse ownership:
  * - The engine listens on window for keys/mouse and runs binds (movement,
- *   Y = openChat, ` / ~ = toggleConsole, Tab = scoreboard while held, 1-7 map vote /
- *   1-2 RTV request (vote.ts routeVoteKey, ahead of binds),
+ *   Y = openChat, ` / ~ = toggleConsole, Tab = scoreboard while held, 1-4 weapon slots,
  *   M spectate, R restart, wheel jump). Pointer-lock loss while no overlay is
  *   open sets settingsOpen = true (browsers swallow Esc when exiting lock).
  * - While chatOpen or consoleOpen or settingsOpen or authPanelOpen is true,
